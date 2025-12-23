@@ -1,0 +1,144 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required to fetch data from the internet. -->
+    <uses-permission
+        android:name="android.permission.INTERNET"/>
+    <uses-permission
+        android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- Recommended for WebRTC network control and audio tweaks -->
+    <uses-permission
+        android:name="android.permission.CHANGE_NETWORK_STATE"/>
+    <uses-permission
+        android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+    <uses-permission
+        android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission
+        android:name="android.permission.CAMERA"/>
+    <!-- Declare camera hardware usage (not required to install) -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false"/>
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false"/>
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"/>
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"/>
+    <!-- Android 13+ runtime permission for notifications -->
+    <uses-permission
+        android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Needed for full-screen incoming call notifications on Android 10+ -->
+    <uses-permission
+        android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+    <!-- Base foreground service permission required on Android 9+ -->
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE"/>
+    <!-- Keep CPU awake briefly during incoming call alerts -->
+    <uses-permission
+        android:name="android.permission.WAKE_LOCK"/>
+    <!-- Critical permissions for locked screen call UI -->
+    <uses-permission
+        android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+    <uses-permission
+        android:name="android.permission.DISABLE_KEYGUARD"/>
+    <!-- Foreground service types for Android 14+ -->
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL"/>
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_CAMERA"/>
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
+    <!-- Satisfy runtime prerequisite for phoneCall foreground service type -->
+    <uses-permission
+        android:name="android.permission.MANAGE_OWN_CALLS"/>
+    <!-- Vibrate for incoming call alerts -->
+    <uses-permission
+        android:name="android.permission.VIBRATE"/>
+    <application
+        android:label="Talkaa"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:supportsPictureInPicture="true"
+            android:windowSoftInputMode="adjustResize"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="false"
+            android:allowTaskReparenting="true">
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme"/>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <!-- Foreground service for VoIP calls. Declare all required types on Android 14+. -->
+        <service
+            android:name=".CallForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="phoneCall|camera|microphone"/>
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2"/>
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"
+            android:exported="false"/>
+        <!-- Native FCM service to start call foreground service in background -->
+        <service
+            android:name=".MyFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action
+                    android:name="com.google.firebase.MESSAGING_EVENT"/>
+            </intent-filter>
+        </service>
+        <!-- Broadcast receiver for call actions to run headless -->
+        <receiver
+            android:name=".CallActionReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action
+                    android:name="com.anonymous.talka.ACTION_ANSWER"/>
+                <action
+                    android:name="com.anonymous.talka.ACTION_DECLINE"/>
+                <action
+                    android:name="com.anonymous.talka.ACTION_HANGUP"/>
+            </intent-filter>
+        </receiver>
+        <!-- Initialize lightweight components after device boot (optional) -->
+        <receiver
+            android:name=".BootCompletedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action
+                    android:name="android.intent.action.BOOT_COMPLETED"/>
+            </intent-filter>
+        </receiver>
+    </application>
+    <!-- Optional: handle device boot to initialize lightweight components -->
+    <uses-permission
+        android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- Required to query activities that can process text, see:
+         https://developer.android.com/training/package-visibility and
+         https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
+
+         In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
+    <queries>
+        <intent>
+            <action
+                android:name="android.intent.action.PROCESS_TEXT"/>
+            <data
+                android:mimeType="text/plain"/>
+        </intent>
+    </queries>
+</manifest>

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect width="512" height="512" fill="#009a66" rx="100" ry="100"/>
+  
+  <!-- Chat bubble -->
+  <path d="M256 120c-86 0-156 60-156 134 0 48 28 90 72 114v54c0 5 6 9 11 6l64-32c3-2 7-2 11 0l64 32c5 3 11-1 11-6v-54c44-24 72-66 72-114 0-74-70-134-156-134z"
+        fill="#fff"/>
+  
+  <!-- Smile -->
+  <path d="M176 250c0 44 36 80 80 80s80-36 80-80" 
+        fill="none" stroke="#009a66" stroke-width="24" stroke-linecap="round"/>
+</svg>
