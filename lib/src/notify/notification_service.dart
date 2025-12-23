@@ -3,13 +3,17 @@ import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
+// ignore: depend_on_referenced_packages
 import 'package:image/image.dart' as img;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'call_notifications.dart';
+import 'active_chat_tracker.dart';
+import '../ui/navigation.dart';
+import '../chat/conversation_page.dart';
 
 // Fallback Supabase config for background isolate when payload/statics are missing
 const String kSupabaseUrl = 'https://irhcsswgriznsroimnhf.supabase.co';
@@ -32,6 +36,53 @@ class NotificationService {
   // Cache for accumulated messages per chat (WhatsApp-style)
   static final Map<String, List<_CachedMessage>> _messageCache = {};
   static const int _maxCachedMessages = 10;
+
+  // Notification preference helpers
+  static Future<bool> _isMessagesEnabled() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool('notif_messages') ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  // ignore: unused_element
+  static Future<bool> _isCallsEnabled() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool('notif_calls') ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  static Future<bool> _isSoundEnabled() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool('notif_sound') ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  static Future<bool> _isVibrationEnabled() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool('notif_vibration') ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  static Future<bool> _isPreviewEnabled() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool('notif_preview') ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
 
   static Uint8List? _getCircularBitmap(Uint8List imageBytes) {
     try {
@@ -136,6 +187,24 @@ class NotificationService {
     required String content,
     String? avatarUrl,
   }) async {
+    // Check if user is currently viewing this conversation - don't show notification
+    // Use async check which also reads from SharedPreferences for reliability
+    if (await ActiveChatTracker.isActiveAsync(chatId)) {
+      debugPrint('NotificationService: Skipping notification - user is in this conversation');
+      return;
+    }
+
+    // Check if messages notifications are enabled
+    if (!await _isMessagesEnabled()) {
+      debugPrint('NotificationService: Messages notifications disabled');
+      return;
+    }
+
+    // Get notification behavior preferences
+    final soundEnabled = await _isSoundEnabled();
+    final vibrationEnabled = await _isVibrationEnabled();
+    final previewEnabled = await _isPreviewEnabled();
+
     final actions = <AndroidNotificationAction>[
       const AndroidNotificationAction(
         replyActionId,
@@ -189,6 +258,12 @@ class NotificationService {
       ),
     )).toList();
 
+    // Apply preview setting - hide content if disabled
+    final displayContent = previewEnabled ? content : 'New message';
+    final displayMessages = previewEnabled 
+        ? messagingStyleMessages 
+        : [Message('New message', DateTime.now(), Person(name: senderName, bot: false))];
+
     final androidDetails = AndroidNotificationDetails(
       chatChannelId,
       chatChannelName,
@@ -202,6 +277,8 @@ class NotificationService {
       groupKey: 'chat_messages_group',
       setAsGroupSummary: false,
       number: messageCount,
+      playSound: soundEnabled,
+      enableVibration: vibrationEnabled,
       styleInformation: MessagingStyleInformation(
         Person(
           name: senderName,
@@ -210,13 +287,13 @@ class NotificationService {
         ),
         conversationTitle: senderName,
         groupConversation: false,
-        messages: messagingStyleMessages,
+        messages: displayMessages,
       ),
     );
-    final iosDetails = const DarwinNotificationDetails(
+    final iosDetails = DarwinNotificationDetails(
       categoryIdentifier: chatCategoryId,
       presentAlert: true,
-      presentSound: true,
+      presentSound: soundEnabled,
       presentBadge: true,
     );
 
@@ -238,7 +315,7 @@ class NotificationService {
     await _fln.show(
       chatId.hashCode,
       senderName,
-      content.isNotEmpty ? content : 'New message',
+      displayContent.isNotEmpty ? displayContent : 'New message',
       NotificationDetails(android: androidDetails, iOS: iosDetails),
       payload: payload,
     );
@@ -345,10 +422,53 @@ class NotificationService {
           supabaseUrl: supabaseUrl,
           accessToken: accessToken,
         ));
+        return;
+      }
+
+      // Handle notification tap (no action, just tap on notification body)
+      if ((response.actionId == null || response.actionId!.isEmpty) && chatId != null) {
+        debugPrint('NotificationService: Notification tapped for chat: $chatId');
+        // Cancel the notification
+        unawaited(_fln.cancel(chatId.hashCode));
+        _messageCache.remove(chatId);
+        // Navigate to conversation
+        _navigateToConversation(chatId);
+        return;
       }
     } catch (e) {
       debugPrint('onNotificationResponse error: ${e.toString()}');
     }
+  }
+
+  static void _navigateToConversation(String chatId) {
+    try {
+      // Set pending navigation immediately to suppress any incoming notifications
+      ActiveChatTracker.setPendingNavigation(chatId);
+      
+      final navigator = appNavigatorKey.currentState;
+      if (navigator != null) {
+        debugPrint('NotificationService: Navigating to conversation: $chatId');
+        navigator.push(
+          MaterialPageRoute(
+            builder: (_) => ConversationPage(conversationId: chatId),
+          ),
+        );
+      } else {
+        debugPrint('NotificationService: Navigator not available, storing pending navigation');
+        _pendingChatNavigation = chatId;
+      }
+    } catch (e) {
+      debugPrint('NotificationService: Navigation error: $e');
+    }
+  }
+
+  // Store pending navigation for when app starts from notification
+  static String? _pendingChatNavigation;
+
+  static String? consumePendingNavigation() {
+    final chatId = _pendingChatNavigation;
+    _pendingChatNavigation = null;
+    return chatId;
   }
 
   static Future<void> _sendReply({

@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../providers.dart';
 import '../chat/chat_home.dart';
 import '../chat/search_user_screen.dart';
 import '../call/calls_page.dart';
 import '../settings/settings_page.dart';
-import 'more_page.dart';
+import 'watch_party_page.dart';
 import 'app_bottom_nav_bar.dart';
 
 class HomeShell extends ConsumerStatefulWidget {
@@ -16,12 +15,11 @@ class HomeShell extends ConsumerStatefulWidget {
 }
 
 class _HomeShellState extends ConsumerState<HomeShell> {
-  int _index = 0; // 0: Dashboard, 1: Calls, 2: Settings, 3: More
+  int _index = 0; // 0: Dashboard, 1: Calls, 2: Settings, 3: Watch Party
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final client = ref.watch(supabaseProvider);
 
     return Scaffold(
       backgroundColor: cs.surface,
@@ -32,7 +30,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           ChatHome(showFab: false),
           CallsPage(),
           SettingsPage(),
-          MorePage(),
+          WatchPartyPage(),
         ],
       ),
       bottomNavigationBar: AppBottomNavBar(

@@ -21,6 +21,14 @@ import android.os.Handler
 import android.os.Looper
 import android.app.KeyguardManager
 import android.view.WindowManager
+import android.media.AudioManager
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothHeadset
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import androidx.core.app.ActivityCompat
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.anonymous.talka/pip"
@@ -32,6 +40,12 @@ class MainActivity : FlutterActivity() {
     // Call notification channel and actions
     private val CALL_CHANNEL = "com.anonymous.talka/call_notify"
     private var callNotifyChannel: MethodChannel? = null
+    
+    // Audio device management channel
+    private val AUDIO_CHANNEL = "com.anonymous.talka/audio_devices"
+    private var audioChannel: MethodChannel? = null
+    private var bluetoothHeadset: BluetoothHeadset? = null
+    private var bluetoothAdapter: BluetoothAdapter? = null
     private val CALL_NOTIF_CHANNEL_ID = "call_notifications"
     private val ACTION_ANSWER = "com.anonymous.talka.ACTION_ANSWER"
     private val ACTION_DECLINE = "com.anonymous.talka.ACTION_DECLINE"
@@ -75,6 +89,9 @@ class MainActivity : FlutterActivity() {
         
         // Initialize the Flutter bridge for native-Flutter communication
         CallFlutterBridge.init(flutterEngine, this)
+        
+        // Initialize auto-start helper for OEM-specific permissions
+        AutoStartHelper.init(flutterEngine, this)
         
         // Store PiP channel reference for later callbacks
         val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
@@ -226,6 +243,155 @@ class MainActivity : FlutterActivity() {
                 }
                 else -> result.notImplemented()
             }
+        }
+        
+        // Set up audio device management channel
+        val audioDeviceChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AUDIO_CHANNEL)
+        audioChannel = audioDeviceChannel
+        setupBluetoothProfile()
+        audioDeviceChannel.setMethodCallHandler { call: MethodCall, result: MethodChannel.Result ->
+            when (call.method) {
+                "getAudioDevices" -> {
+                    result.success(getAvailableAudioDevices())
+                }
+                "selectAudioDevice" -> {
+                    val deviceId: String? = call.argument("deviceId")
+                    if (deviceId != null) {
+                        selectAudioDevice(deviceId)
+                        result.success(true)
+                    } else {
+                        result.error("bad_args", "deviceId is required", null)
+                    }
+                }
+                "getCurrentAudioDevice" -> {
+                    result.success(getCurrentAudioDevice())
+                }
+                "requestBluetoothPermission" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) 
+                            != PackageManager.PERMISSION_GRANTED) {
+                            ActivityCompat.requestPermissions(this, 
+                                arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 1001)
+                            result.success(false)
+                        } else {
+                            result.success(true)
+                        }
+                    } else {
+                        result.success(true)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+    
+    private fun setupBluetoothProfile() {
+        try {
+            bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
+            bluetoothAdapter?.getProfileProxy(this, object : BluetoothProfile.ServiceListener {
+                override fun onServiceConnected(profile: Int, proxy: BluetoothProfile?) {
+                    if (profile == BluetoothProfile.HEADSET) {
+                        bluetoothHeadset = proxy as? BluetoothHeadset
+                    }
+                }
+                override fun onServiceDisconnected(profile: Int) {
+                    if (profile == BluetoothProfile.HEADSET) {
+                        bluetoothHeadset = null
+                    }
+                }
+            }, BluetoothProfile.HEADSET)
+        } catch (e: Exception) {
+            // Bluetooth not available or permission denied
+        }
+    }
+    
+    private fun getAvailableAudioDevices(): List<Map<String, String>> {
+        val devices = mutableListOf<Map<String, String>>()
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        
+        // Always add earpiece and speaker
+        devices.add(mapOf("id" to "earpiece", "name" to "Phone Earpiece", "type" to "earpiece"))
+        devices.add(mapOf("id" to "speaker", "name" to "Speaker", "type" to "speaker"))
+        
+        // Check for wired headset
+        if (audioManager.isWiredHeadsetOn) {
+            devices.add(mapOf("id" to "wired", "name" to "Wired Headset", "type" to "wired"))
+        }
+        
+        // Check for Bluetooth devices
+        try {
+            val hasBluetoothPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == 
+                    PackageManager.PERMISSION_GRANTED
+            } else {
+                true
+            }
+            
+            if (hasBluetoothPermission) {
+                // Check if Bluetooth audio is available
+                if (audioManager.isBluetoothScoAvailableOffCall || audioManager.isBluetoothA2dpOn) {
+                    val connectedDevices = bluetoothHeadset?.connectedDevices
+                    if (!connectedDevices.isNullOrEmpty()) {
+                        for (device in connectedDevices) {
+                            val name = try { device.name ?: "Bluetooth Device" } catch (_: Exception) { "Bluetooth Device" }
+                            devices.add(mapOf(
+                                "id" to "bluetooth_${device.address}",
+                                "name" to name,
+                                "type" to "bluetooth"
+                            ))
+                        }
+                    } else if (audioManager.isBluetoothScoOn || audioManager.isBluetoothA2dpOn) {
+                        // Bluetooth is on but we can't get device details
+                        devices.add(mapOf("id" to "bluetooth", "name" to "Bluetooth", "type" to "bluetooth"))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Bluetooth permission denied or not available
+        }
+        
+        return devices
+    }
+    
+    private fun selectAudioDevice(deviceId: String) {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        
+        when {
+            deviceId == "speaker" -> {
+                audioManager.isSpeakerphoneOn = true
+                audioManager.isBluetoothScoOn = false
+                try { audioManager.stopBluetoothSco() } catch (_: Exception) {}
+            }
+            deviceId == "earpiece" -> {
+                audioManager.isSpeakerphoneOn = false
+                audioManager.isBluetoothScoOn = false
+                try { audioManager.stopBluetoothSco() } catch (_: Exception) {}
+            }
+            deviceId == "wired" -> {
+                audioManager.isSpeakerphoneOn = false
+                audioManager.isBluetoothScoOn = false
+                try { audioManager.stopBluetoothSco() } catch (_: Exception) {}
+            }
+            deviceId.startsWith("bluetooth") -> {
+                audioManager.isSpeakerphoneOn = false
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                try {
+                    audioManager.startBluetoothSco()
+                    audioManager.isBluetoothScoOn = true
+                } catch (e: Exception) {
+                    // Bluetooth SCO not available
+                }
+            }
+        }
+    }
+    
+    private fun getCurrentAudioDevice(): String {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        return when {
+            audioManager.isBluetoothScoOn -> "bluetooth"
+            audioManager.isSpeakerphoneOn -> "speaker"
+            audioManager.isWiredHeadsetOn -> "wired"
+            else -> "earpiece"
         }
     }
 

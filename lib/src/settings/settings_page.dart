@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers.dart';
@@ -5,6 +6,7 @@ import '../profile/user_profile_provider.dart';
 import 'theme_controller.dart';
 import 'edit_profile_page.dart';
 import 'notification_settings_page.dart';
+import 'autostart_helper.dart';
 
 final currentUserAvatarUrlProvider = FutureProvider<String?>((ref) async {
   final client = ref.read(supabaseProvider);
@@ -156,6 +158,25 @@ class SettingsPage extends ConsumerWidget {
                     );
                   },
                 ),
+                if (Platform.isAndroid) ...[
+                  const Divider(height: 0),
+                  FutureBuilder<bool>(
+                    future: AutoStartHelper.isAutoStartAvailable(),
+                    builder: (context, snapshot) {
+                      if (snapshot.data != true) return const SizedBox.shrink();
+                      return ListTile(
+                        leading: const Icon(Icons.rocket_launch_outlined),
+                        title: const Text('Auto-Start'),
+                        subtitle: const Text('Enable background start for calls'),
+                        trailing: Icon(
+                          Icons.chevron_right,
+                          color: cs.onSurface.withValues(alpha: 0.5),
+                        ),
+                        onTap: () => AutoStartHelper.showAutoStartDialog(context),
+                      );
+                    },
+                  ),
+                ],
               ],
             ),
           ),

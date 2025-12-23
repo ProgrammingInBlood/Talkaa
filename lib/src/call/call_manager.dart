@@ -43,44 +43,56 @@ class CallManager {
       case 'incoming_call':
       case 'open':
         // Show call screen if not already showing and we have a call
-        if (!_isCallScreenShowing) {
-          // Wait a bit for call state to be set up
-          Future.delayed(const Duration(milliseconds: 300), () {
-            final ctrl = ref.read(callServiceProvider);
-            // Show for any active call state (ringing, calling, connecting, connected)
-            if ((ctrl.status.isRinging || ctrl.status.isActive) && !_isCallScreenShowing) {
-              final isIncoming = ctrl.status == CallStatus.ringing;
-              final userId = ctrl.currentUserId;
-              _showCallScreen(
-                controller: ctrl,
-                calleeName: userId != null ? ctrl.currentCall?.remoteUserName(userId) : null,
-                calleeAvatar: userId != null ? ctrl.currentCall?.remoteUserAvatar(userId) : null,
-                callType: ctrl.callType,
-                isIncoming: isIncoming,
-              );
-            }
-          });
-        }
+        _tryShowCallScreen(ref, isIncoming: true);
         break;
       case 'answer':
-        // Show call screen for answered call
-        if (!_isCallScreenShowing) {
-          Future.delayed(const Duration(milliseconds: 300), () {
-            final ctrl = ref.read(callServiceProvider);
-            if ((ctrl.status.isRinging || ctrl.status.isActive) && !_isCallScreenShowing) {
-              final userId = ctrl.currentUserId;
-              _showCallScreen(
-                controller: ctrl,
-                calleeName: userId != null ? ctrl.currentCall?.remoteUserName(userId) : null,
-                calleeAvatar: userId != null ? ctrl.currentCall?.remoteUserAvatar(userId) : null,
-                callType: ctrl.callType,
-                isIncoming: true,
-              );
-            }
-          });
-        }
+        // Show call screen for answered call - use longer delay to ensure call is set up
+        _tryShowCallScreenWithRetry(ref, isIncoming: false, maxRetries: 5);
         break;
     }
+  }
+  
+  void _tryShowCallScreen(WidgetRef ref, {required bool isIncoming}) {
+    if (_isCallScreenShowing) return;
+    
+    Future.delayed(const Duration(milliseconds: 300), () {
+      final ctrl = ref.read(callServiceProvider);
+      if ((ctrl.status.isRinging || ctrl.status.isActive || ctrl.status == CallStatus.connecting || ctrl.status == CallStatus.connected) && !_isCallScreenShowing) {
+        final userId = ctrl.currentUserId;
+        _showCallScreen(
+          controller: ctrl,
+          calleeName: userId != null ? ctrl.currentCall?.remoteUserName(userId) : null,
+          calleeAvatar: userId != null ? ctrl.currentCall?.remoteUserAvatar(userId) : null,
+          callType: ctrl.callType,
+          isIncoming: isIncoming,
+        );
+      }
+    });
+  }
+  
+  void _tryShowCallScreenWithRetry(WidgetRef ref, {required bool isIncoming, int maxRetries = 5, int attempt = 0}) {
+    if (_isCallScreenShowing || attempt >= maxRetries) return;
+    
+    Future.delayed(Duration(milliseconds: 300 + (attempt * 200)), () {
+      final ctrl = ref.read(callServiceProvider);
+      final hasCall = ctrl.status.isRinging || ctrl.status.isActive || 
+                      ctrl.status == CallStatus.connecting || ctrl.status == CallStatus.connected;
+      
+      if (hasCall && !_isCallScreenShowing) {
+        final userId = ctrl.currentUserId;
+        _showCallScreen(
+          controller: ctrl,
+          calleeName: userId != null ? ctrl.currentCall?.remoteUserName(userId) : null,
+          calleeAvatar: userId != null ? ctrl.currentCall?.remoteUserAvatar(userId) : null,
+          callType: ctrl.callType,
+          isIncoming: isIncoming,
+        );
+      } else if (!hasCall && attempt < maxRetries - 1) {
+        // Retry if call state isn't ready yet
+        debugPrint('CallManager: Retrying to show call screen, attempt ${attempt + 1}');
+        _tryShowCallScreenWithRetry(ref, isIncoming: isIncoming, maxRetries: maxRetries, attempt: attempt + 1);
+      }
+    });
   }
   
   void _handleCallStatusChange(

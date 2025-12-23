@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:proximity_sensor/proximity_sensor.dart';
 import '../call_service.dart';
 import '../model/call_state.dart';
 import 'widgets/call_controls.dart';
@@ -43,6 +45,9 @@ class _CallScreenState extends ConsumerState<CallScreen>
   Timer? _hideControlsTimer;
   StreamSubscription? _localStreamSub;
   StreamSubscription? _remoteStreamSub;
+  StreamSubscription? _proximitySub;
+  bool _isNear = false;
+  bool _isInPipMode = false;
 
   @override
   void initState() {
@@ -50,9 +55,37 @@ class _CallScreenState extends ConsumerState<CallScreen>
     WidgetsBinding.instance.addObserver(this);
     _initRenderers();
     _setupPipListener();
+    _setupWakelock();
+    _setupProximitySensor();
     
     // Auto-hide controls after 5 seconds
     _startHideControlsTimer();
+  }
+
+  void _setupWakelock() {
+    // Keep screen awake during calls
+    WakelockPlus.enable();
+  }
+
+  void _setupProximitySensor() {
+    // Listen to proximity sensor for audio calls
+    _proximitySub = ProximitySensor.events.listen((int event) {
+      final isNear = event > 0;
+      if (_isNear != isNear) {
+        setState(() => _isNear = isNear);
+        final controller = ref.read(callServiceProvider);
+        // Only turn off screen for audio calls when phone is near ear
+        if (controller.callType == CallType.audio && controller.status.isActive) {
+          if (isNear && !controller.isSpeakerOn) {
+            // Phone near ear and not on speaker - turn off screen
+            WakelockPlus.disable();
+          } else {
+            // Phone away from ear or on speaker - keep screen on
+            WakelockPlus.enable();
+          }
+        }
+      }
+    });
   }
 
   Future<void> _initRenderers() async {
@@ -90,9 +123,9 @@ class _CallScreenState extends ConsumerState<CallScreen>
   void _setupPipListener() {
     _pipChannel.setMethodCallHandler((call) async {
       if (call.method == 'pipModeChanged') {
-        // Handle PiP mode change - could update UI if needed
+        final active = call.arguments['active'] as bool? ?? false;
         if (mounted) {
-          setState(() {});
+          setState(() => _isInPipMode = active);
         }
       }
     });
@@ -144,8 +177,11 @@ class _CallScreenState extends ConsumerState<CallScreen>
     _hideControlsTimer?.cancel();
     _localStreamSub?.cancel();
     _remoteStreamSub?.cancel();
+    _proximitySub?.cancel();
     _localRenderer.dispose();
     _remoteRenderer.dispose();
+    // Disable wakelock when leaving call screen
+    WakelockPlus.disable();
     super.dispose();
   }
 
@@ -179,6 +215,11 @@ class _CallScreenState extends ConsumerState<CallScreen>
               Navigator.of(context).pop();
             }
           });
+        }
+
+        // Show compact PiP view when in PiP mode
+        if (_isInPipMode) {
+          return _buildPipModeView(controller, isVideo, isConnected);
         }
 
         return PopScope(
@@ -440,6 +481,7 @@ class _CallScreenState extends ConsumerState<CallScreen>
         onSpeakerToggle: () => controller.toggleSpeaker(),
         onCameraSwitch: () => controller.switchCamera(),
         onEndCall: () => controller.endCall(),
+        controller: controller,
       );
     }
     
@@ -463,6 +505,71 @@ class _CallScreenState extends ConsumerState<CallScreen>
             size: 32,
           ),
         ),
+      ),
+    );
+  }
+
+  /// Compact view for Picture-in-Picture mode
+  Widget _buildPipModeView(CallController controller, bool isVideo, bool isConnected) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF1A1A2E),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Video background for video calls
+          if (isVideo && isConnected)
+            RTCVideoView(
+              _remoteRenderer,
+              objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+              mirror: false,
+            )
+          else
+            // Gradient background for audio calls
+            Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0xFF1A2E1A),
+                    Color(0xFF0F1A0F),
+                  ],
+                ),
+              ),
+              child: Center(
+                child: Icon(
+                  controller.callType == CallType.video ? Icons.videocam : Icons.call,
+                  color: Colors.white.withValues(alpha: 0.5),
+                  size: 48,
+                ),
+              ),
+            ),
+
+          // Minimal end call button at bottom
+          Positioned(
+            bottom: 8,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: GestureDetector(
+                onTap: () => controller.endCall(),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.9),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.call_end,
+                    color: Colors.white,
+                    size: 18,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

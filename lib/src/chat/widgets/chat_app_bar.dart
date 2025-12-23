@@ -9,6 +9,7 @@ import 'package:talka_flutter/src/ui/navigation.dart';
 import 'package:talka_flutter/src/call/call_service.dart';
 import 'package:talka_flutter/src/call/call_manager.dart';
 import 'package:talka_flutter/src/call/model/call_state.dart';
+import 'package:talka_flutter/src/profile/user_profile_screen.dart';
 
 class ChatAppBar extends ConsumerStatefulWidget implements PreferredSizeWidget {
   final String? conversationId;
@@ -112,22 +113,44 @@ class _ChatAppBarState extends ConsumerState<ChatAppBar> {
           return Row(
             children: [
               const SizedBox(width: 6),
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 2),
-                ),
-                child: CircleAvatar(
-                  radius: 16,
-                  backgroundColor: Colors.white24,
-                  backgroundImage:
-                      avatarUrl.isNotEmpty ? NetworkImage(avatarUrl) : null,
-                  child: avatarUrl.isEmpty
-                      ? const Icon(Icons.person, color: Colors.white)
-                      : null,
-                ),
+              FutureBuilder<String?>(
+                future: _getPeerId(ref),
+                builder: (context, peerSnap) {
+                  final peerId = peerSnap.data;
+                  return GestureDetector(
+                    onTap: peerId != null ? () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => UserProfileScreen(
+                            userId: peerId,
+                            initialName: name,
+                            initialAvatar: avatarUrl.isNotEmpty ? avatarUrl : null,
+                          ),
+                        ),
+                      );
+                    } : null,
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                      ),
+                      child: Hero(
+                        tag: 'profile_avatar_${peerId ?? 'unknown'}',
+                        child: CircleAvatar(
+                          radius: 16,
+                          backgroundColor: Colors.white24,
+                          backgroundImage:
+                              avatarUrl.isNotEmpty ? NetworkImage(avatarUrl) : null,
+                          child: avatarUrl.isEmpty
+                              ? const Icon(Icons.person, color: Colors.white, size: 16)
+                              : null,
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
               const SizedBox(width: 8),
               Expanded(

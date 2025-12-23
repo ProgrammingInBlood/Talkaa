@@ -136,12 +136,13 @@ class _CallHistoryTile extends ConsumerWidget {
     required this.currentUserId,
   });
 
-  void _initiateCall(BuildContext context, WidgetRef ref, String otherUserId, String name, String? avatarUrl, CallType callType) {
-    debugPrint('_CallHistoryTile._initiateCall: userId=$otherUserId, type=$callType, name=$name');
+  void _initiateCall(BuildContext context, WidgetRef ref, String otherUserId, String name, String? avatarUrl, CallType callType, String? chatId) {
+    debugPrint('_CallHistoryTile._initiateCall: userId=$otherUserId, type=$callType, name=$name, chatId=$chatId');
     final controller = ref.read(callServiceProvider);
     CallManager.instance.showOutgoingCallScreen(
       calleeId: otherUserId,
       callType: callType,
+      chatId: chatId,
       calleeName: name,
       calleeAvatar: avatarUrl,
       controller: controller,
@@ -189,7 +190,7 @@ class _CallHistoryTile extends ConsumerWidget {
                     color: cs.primary,
                     onTap: () {
                       Navigator.pop(ctx);
-                      _initiateCall(context, ref, otherUserId, name, avatarUrl, CallType.audio);
+                      _initiateCall(context, ref, otherUserId, name, avatarUrl, CallType.audio, call['chat_id'] as String?);
                     },
                   ),
                   _CallOptionButton(
@@ -198,7 +199,7 @@ class _CallHistoryTile extends ConsumerWidget {
                     color: cs.primary,
                     onTap: () {
                       Navigator.pop(ctx);
-                      _initiateCall(context, ref, otherUserId, name, avatarUrl, CallType.video);
+                      _initiateCall(context, ref, otherUserId, name, avatarUrl, CallType.video, call['chat_id'] as String?);
                     },
                   ),
                 ],
@@ -314,7 +315,7 @@ class _CallHistoryTile extends ConsumerWidget {
         ),
         onPressed: () {
           final callType = type == 'video' ? CallType.video : CallType.audio;
-          _initiateCall(context, ref, otherUserId, name, avatarUrl, callType);
+          _initiateCall(context, ref, otherUserId, name, avatarUrl, callType, call['chat_id'] as String?);
         },
       ),
       onTap: () => _showCallOptions(context, ref, otherUserId, name, avatarUrl),

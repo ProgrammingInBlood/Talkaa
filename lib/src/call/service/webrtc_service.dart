@@ -367,6 +367,96 @@ class WebRTCService {
     }
   }
 
+  /// Set speaker on/off explicitly
+  Future<void> setSpeakerOn(bool enabled) async {
+    _isSpeakerOn = enabled;
+    try {
+      await Helper.setSpeakerphoneOn(_isSpeakerOn);
+      debugPrint('WebRTCService: Speaker set to: $_isSpeakerOn');
+    } catch (e) {
+      debugPrint('WebRTCService: Error setting speaker: $e');
+    }
+  }
+
+  /// Get available audio output devices
+  Future<List<MediaDeviceInfo>> getAudioOutputDevices() async {
+    try {
+      final devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.where((d) => d.kind == 'audiooutput').toList();
+    } catch (e) {
+      debugPrint('WebRTCService: Error getting audio output devices: $e');
+      return [];
+    }
+  }
+
+  /// Get available audio input devices (microphones)
+  Future<List<MediaDeviceInfo>> getAudioInputDevices() async {
+    try {
+      final devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.where((d) => d.kind == 'audioinput').toList();
+    } catch (e) {
+      debugPrint('WebRTCService: Error getting audio input devices: $e');
+      return [];
+    }
+  }
+
+  /// Select audio output device by ID
+  Future<void> selectAudioOutput(String deviceId) async {
+    try {
+      // For mobile, we use Helper methods
+      // deviceId convention: 'speaker', 'earpiece', 'bluetooth'
+      if (deviceId == 'speaker') {
+        await Helper.setSpeakerphoneOn(true);
+        _isSpeakerOn = true;
+      } else {
+        await Helper.setSpeakerphoneOn(false);
+        _isSpeakerOn = false;
+      }
+      debugPrint('WebRTCService: Audio output selected: $deviceId');
+    } catch (e) {
+      debugPrint('WebRTCService: Error selecting audio output: $e');
+    }
+  }
+
+  /// Select audio input device by ID
+  Future<void> selectAudioInput(String deviceId) async {
+    try {
+      if (_localStream == null) return;
+      
+      // Get new audio stream with selected device
+      final constraints = {
+        'audio': {'deviceId': deviceId},
+        'video': false,
+      };
+      
+      final newStream = await navigator.mediaDevices.getUserMedia(constraints);
+      final newAudioTrack = newStream.getAudioTracks().first;
+      
+      // Replace audio track in local stream
+      final oldAudioTracks = _localStream!.getAudioTracks();
+      for (final track in oldAudioTracks) {
+        _localStream!.removeTrack(track);
+        track.stop();
+      }
+      _localStream!.addTrack(newAudioTrack);
+      
+      // Replace track in peer connection
+      if (_peerConnection != null) {
+        final senders = await _peerConnection!.getSenders();
+        for (final sender in senders) {
+          if (sender.track?.kind == 'audio') {
+            await sender.replaceTrack(newAudioTrack);
+            break;
+          }
+        }
+      }
+      
+      debugPrint('WebRTCService: Audio input selected: $deviceId');
+    } catch (e) {
+      debugPrint('WebRTCService: Error selecting audio input: $e');
+    }
+  }
+
   /// Switch between front and back camera
   Future<void> switchCamera() async {
     if (_localStream == null) return;

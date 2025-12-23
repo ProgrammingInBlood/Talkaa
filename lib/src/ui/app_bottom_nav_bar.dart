@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 class AppBottomNavBar extends StatelessWidget {
-  final int currentIndex; // 0: Dashboard, 1: Calls, 2: Settings, 3: More
+  final int currentIndex; // 0: Dashboard, 1: Calls, 2: Settings, 3: Watch Party
   final void Function(int index)? onTabSelected;
 
   const AppBottomNavBar({
@@ -34,7 +34,7 @@ class AppBottomNavBar extends StatelessWidget {
               onPressed: () => onTabSelected?.call(2),
             ),
             IconButton(
-              icon: Icon(Icons.more_horiz, color: colorFor(3)),
+              icon: Icon(Icons.live_tv_outlined, color: colorFor(3)),
               onPressed: () => onTabSelected?.call(3),
             ),
           ],

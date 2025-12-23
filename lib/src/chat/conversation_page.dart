@@ -37,7 +37,7 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
   void initState() {
     super.initState();
     // Track active chat to suppress duplicate notifications when this screen is open
-    ActiveChatTracker.setActiveChat(widget.conversationId);
+    _initActiveChat();
     // Cancel any existing notifications for this chat
     if (widget.conversationId != null) {
       NotificationService.cancelChatNotification(widget.conversationId!);
@@ -71,6 +71,8 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
               setState(() => _messages.add(row));
               // Always pin to bottom when a new message arrives
               WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+              // Mark incoming messages as read immediately since user is viewing
+              _markAsRead();
             }
           },
         )
@@ -92,7 +94,7 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
                   // Remove deleted messages from UI
                   _messages.removeAt(index);
                 } else {
-                  // Update existing message
+                  // Update existing message (including read_at updates)
                   _messages[index] = updatedRow;
                 }
               }
@@ -127,6 +129,10 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
         } catch (_) {}
       }
     });
+  }
+
+  Future<void> _initActiveChat() async {
+    await ActiveChatTracker.setActiveChat(widget.conversationId);
   }
 
   @override
@@ -190,7 +196,7 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
             .eq('id', senderId)
             .limit(1);
         if ((profileRows as List).isNotEmpty) {
-          final profile = profileRows.first as Map<String, dynamic>;
+          final profile = profileRows.first;
           final fullName = (profile['full_name'] as String?)?.trim();
           final username = (profile['username'] as String?)?.trim();
           avatarUrl = (profile['avatar_url'] as String?)?.trim();

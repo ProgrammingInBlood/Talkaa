@@ -104,4 +104,45 @@ class StoryService {
       return false;
     }
   }
+
+  Future<List<Map<String, dynamic>>> fetchStoryViewers(String storyId) async {
+    try {
+      final uid = client.auth.currentUser?.id;
+      if (uid == null) return [];
+
+      // Only story owner should see viewers
+      final story = await client
+          .from('stories')
+          .select('user_id')
+          .eq('id', storyId)
+          .maybeSingle();
+      
+      if (story == null || story['user_id'] != uid) {
+        return [];
+      }
+
+      final response = await client
+          .from('story_views')
+          .select('viewer_id, viewed_at, viewer:profiles(full_name, username, avatar_url)')
+          .eq('story_id', storyId)
+          .order('viewed_at', ascending: false);
+
+      return List<Map<String, dynamic>>.from(response as List);
+    } catch (e) {
+      debugPrint('Error fetching story viewers: $e');
+      return [];
+    }
+  }
+
+  Future<int> getStoryViewCount(String storyId) async {
+    try {
+      final response = await client
+          .from('story_views')
+          .select('id')
+          .eq('story_id', storyId);
+      return (response as List).length;
+    } catch (_) {
+      return 0;
+    }
+  }
 }

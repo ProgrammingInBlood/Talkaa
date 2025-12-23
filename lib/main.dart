@@ -19,6 +19,7 @@ import 'src/settings/theme_controller.dart';
 import 'src/notify/notification_service.dart';
 import 'src/notify/call_notifications.dart';
 import 'src/notify/active_chat_tracker.dart';
+import 'src/chat/conversation_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -69,6 +70,37 @@ class RootInitializer extends StatefulWidget {
 }
 
 class _RootInitializerState extends State<RootInitializer> with WidgetsBindingObserver {
+  String? _pendingChatId;
+
+  void _navigateToChatIfReady(String chatId) {
+    // Set pending navigation to suppress notifications during transition
+    ActiveChatTracker.setPendingNavigation(chatId);
+    
+    final navigator = appNavigatorKey.currentState;
+    if (navigator != null) {
+      debugPrint('Navigating to chat: $chatId');
+      navigator.push(
+        MaterialPageRoute(
+          builder: (_) => ConversationPage(conversationId: chatId),
+        ),
+      );
+    } else {
+      // Navigator not ready yet, store for later
+      _pendingChatId = chatId;
+    }
+  }
+
+  void _checkPendingNavigation() {
+    if (_pendingChatId != null) {
+      final chatId = _pendingChatId!;
+      _pendingChatId = null;
+      // Delay slightly to ensure navigator is fully ready
+      Future.delayed(const Duration(milliseconds: 300), () {
+        _navigateToChatIfReady(chatId);
+      });
+    }
+  }
+
   Future<void> _applyHighRefresh() async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
     try {
@@ -208,8 +240,9 @@ class _RootInitializerState extends State<RootInitializer> with WidgetsBindingOb
         final chatId = (data['chat_id'] ?? '').toString();
         if (chatId.isNotEmpty) {
           // Suppress notification if the conversation screen for this chat is already open
-          if (ActiveChatTracker.isActive(chatId)) {
-            debugPrint('Suppressing chat notification for active conversation: ' + chatId);
+          // Use async check which reads from SharedPreferences for better reliability
+          if (await ActiveChatTracker.isActiveAsync(chatId)) {
+            debugPrint('Suppressing chat notification for active conversation: $chatId');
             return;
           }
           final senderId = (data['sender_id'] ?? '').toString();
@@ -229,7 +262,32 @@ class _RootInitializerState extends State<RootInitializer> with WidgetsBindingOb
       // When user taps a notification to open the app
       FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
         debugPrint('FCM onMessageOpenedApp: ${message.messageId}');
+        final data = message.data;
+        final chatId = (data['chat_id'] ?? '').toString();
+        if (chatId.isNotEmpty) {
+          debugPrint('FCM onMessageOpenedApp: Navigating to chat $chatId');
+          _navigateToChatIfReady(chatId);
+        }
       });
+      
+      // Check if app was opened from a terminated state via notification
+      final initialMessage = await FirebaseMessaging.instance.getInitialMessage();
+      if (initialMessage != null) {
+        debugPrint('FCM initial message: ${initialMessage.messageId}');
+        final data = initialMessage.data;
+        final chatId = (data['chat_id'] ?? '').toString();
+        if (chatId.isNotEmpty) {
+          debugPrint('FCM initial message: Will navigate to chat $chatId');
+          _pendingChatId = chatId;
+        }
+      }
+      
+      // Check for pending local notification navigation
+      final pendingLocalNav = NotificationService.consumePendingNavigation();
+      if (pendingLocalNav != null) {
+        debugPrint('Pending local notification navigation to: $pendingLocalNav');
+        _pendingChatId = pendingLocalNav;
+      }
     } catch (e) {
       debugPrint('FCM setup error: $e');
     }
@@ -241,6 +299,10 @@ class _RootInitializerState extends State<RootInitializer> with WidgetsBindingOb
     WidgetsBinding.instance.addObserver(this);
     _applyHighRefresh();
     _initNotifications();
+    // Check for pending navigation after frame is built
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 1000), _checkPendingNavigation);
+    });
   }
 
   @override
@@ -253,6 +315,8 @@ class _RootInitializerState extends State<RootInitializer> with WidgetsBindingOb
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _applyHighRefresh();
+      // Check pending navigation when app resumes
+      _checkPendingNavigation();
     }
   }
 
@@ -334,7 +398,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       // Using native call notifications; no Dart fallback.
       return;
     } catch (e) {
-      debugPrint('Background call invite handling error: ' + e.toString());
+      debugPrint('Background call invite handling error: $e');
     }
   }
   if (type == 'call_cancel' || type == 'call_reject' || type == 'call_decline' || type == 'call_end') {
@@ -346,7 +410,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       }
       return;
     } catch (e) {
-      debugPrint('Background call cancel handling error: ' + e.toString());
+      debugPrint('Background call cancel handling error: $e');
     }
   }
   
@@ -356,6 +420,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 
   // Fallback: show chat notification in background for data-only messages
+  // Note: In background isolate, we can't check ActiveChatTracker since it's 
+  // a different isolate. The check in NotificationService.showAndroidChatNotification
+  // will handle it when the app is in foreground.
   try {
     await NotificationService.init();
     final chatId = (data['chat_id'] ?? '').toString();
@@ -371,6 +438,6 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       );
     }
   } catch (e) {
-    debugPrint('Background chat notification error: ' + e.toString());
+    debugPrint('Background chat notification error: $e');
   }
 }

@@ -354,6 +354,38 @@ class CallController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setSpeakerOn(bool enabled) async {
+    await _webrtcService.setSpeakerOn(enabled);
+    notifyListeners();
+  }
+
+  Future<List<Map<String, String>>> getAudioOutputDevices() async {
+    // Return standard audio output options for mobile
+    return [
+      {'id': 'earpiece', 'label': 'Phone Earpiece', 'icon': 'hearing'},
+      {'id': 'speaker', 'label': 'Speaker', 'icon': 'volume_up'},
+      {'id': 'bluetooth', 'label': 'Bluetooth', 'icon': 'bluetooth_audio'},
+    ];
+  }
+
+  Future<List<Map<String, String>>> getAudioInputDevices() async {
+    // Return standard audio input options for mobile
+    return [
+      {'id': 'default', 'label': 'Phone Microphone', 'icon': 'mic'},
+      {'id': 'bluetooth', 'label': 'Bluetooth Mic', 'icon': 'bluetooth_audio'},
+    ];
+  }
+
+  Future<void> selectAudioOutput(String deviceId) async {
+    await _webrtcService.selectAudioOutput(deviceId);
+    notifyListeners();
+  }
+
+  Future<void> selectAudioInput(String deviceId) async {
+    await _webrtcService.selectAudioInput(deviceId);
+    notifyListeners();
+  }
+
   Future<void> switchCamera() async {
     await _webrtcService.switchCamera();
     notifyListeners();

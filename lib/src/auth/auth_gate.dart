@@ -5,6 +5,8 @@ import '../providers.dart';
 import 'otp_login_page.dart';
 import 'setup_profile_page.dart';
 import '../ui/home_shell.dart';
+import '../chat/conversation_page.dart';
+import '../notify/active_chat_tracker.dart';
 
 /// Result of checking if a user has a profile.
 sealed class ProfileCheckResult {}
@@ -70,6 +72,21 @@ class _AuthGateState extends ConsumerState<AuthGate> {
 
             if (result is ProfileNotFound) {
               return const SetupProfilePage();
+            }
+
+            // Check for pending chat navigation - navigate after frame
+            final pendingChatId = ActiveChatTracker.pendingNavigationChatId;
+            if (pendingChatId != null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                final navChatId = ActiveChatTracker.consumePendingNavigation();
+                if (navChatId != null && context.mounted) {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ConversationPage(conversationId: navChatId),
+                    ),
+                  );
+                }
+              });
             }
 
             return const HomeShell();

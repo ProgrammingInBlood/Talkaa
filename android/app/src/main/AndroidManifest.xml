@@ -24,6 +24,12 @@
         android:name="android.permission.BLUETOOTH"/>
     <uses-permission
         android:name="android.permission.BLUETOOTH_ADMIN"/>
+    <!-- Android 12+ (API 31+) Bluetooth permissions for detecting connected devices -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_CONNECT"/>
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"/>
     <!-- Android 13+ runtime permission for notifications -->
     <uses-permission
         android:name="android.permission.POST_NOTIFICATIONS"/>

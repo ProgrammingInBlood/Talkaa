@@ -6,6 +6,7 @@ import 'package:talka_flutter/src/story/story_uploader.dart';
 import 'package:talka_flutter/src/story/story_service.dart';
 import 'package:dotted_border/dotted_border.dart';
 import 'package:talka_flutter/src/story/story_providers.dart';
+import 'package:talka_flutter/src/story/story_viewer_screen.dart';
 import 'package:talka_flutter/src/profile/user_profile_provider.dart';
 
 class ChatHeader extends ConsumerWidget {
@@ -185,72 +186,24 @@ class ChatHeader extends ConsumerWidget {
                                                     messenger.showSnackBar(const SnackBar(content: Text('No active story')));
                                                     return;
                                                   }
-                                                  final ctrl = PageController();
-                                                  int current = 0;
                                                   if (!context.mounted) return;
-                                                  await showDialog<void>(
-                                                    context: context,
-                                                    builder: (ctx2) {
-                                                      return StatefulBuilder(
-                                                        builder: (ctx2, setState) {
-                                                          void onChanged(int page) async {
-                                                            current = page;
-                                                            setState(() {});
-                                                            final currentId = selfStories[page]['id'].toString();
-                                                            await svc2.markViewed(storyId: currentId);
-                                                          }
-                                                          return Dialog(
-                                                            backgroundColor: Colors.black,
-                                                            insetPadding: const EdgeInsets.all(12),
-                                                            child: Stack(
-                                                              children: [
-                                                                PageView.builder(
-                                                                  controller: ctrl,
-                                                                  onPageChanged: onChanged,
-                                                                  itemCount: selfStories.length,
-                                                                  itemBuilder: (ctx3, index) {
-                                                                    final item = selfStories[index];
-                                                                    final mediaUrl = (item['media_url'] ?? '') as String;
-                                                                    return AnimatedOpacity(
-                                                                      duration: const Duration(milliseconds: 250),
-                                                                      opacity: index == current ? 1.0 : 0.0,
-                                                                      child: InteractiveViewer(
-                                                                        child: Image.network(mediaUrl, fit: BoxFit.contain),
-                                                                      ),
-                                                                    );
-                                                                  },
-                                                                ),
-                                                                Positioned(
-                                                                  right: 8,
-                                                                  top: 8,
-                                                                  child: IconButton(
-                                                                    icon: const Icon(Icons.close, color: Colors.white),
-                                                                    onPressed: () => Navigator.of(context).pop(),
-                                                                  ),
-                                                                ),
-                                                                Positioned(
-                                                                  left: 8,
-                                                                  top: 8,
-                                                                  child: Container(
-                                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                                                    decoration: BoxDecoration(
-                                                                      color: Colors.black54,
-                                                                      borderRadius: BorderRadius.circular(8),
-                                                                      border: Border.all(color: Colors.white24),
-                                                                    ),
-                                                                    child: Text(
-                                                                      'Uploaded ${formatTimestamp((selfStories[current]['created_at'] ?? '').toString())}',
-                                                                      style: const TextStyle(color: Colors.white, fontSize: 12),
-                                                                    ),
-                                                                  ),
-                                                                ),
-                                                              ],
-                                                            ),
-                                                          );
-                                                        },
-                                                      );
-                                                    },
+                                                  final deleted = await Navigator.of(context).push<bool>(
+                                                    PageRouteBuilder(
+                                                      opaque: false,
+                                                      pageBuilder: (_, __, ___) => StoryViewerScreen(
+                                                        stories: selfStories,
+                                                        initialIndex: 0,
+                                                        isOwnStory: true,
+                                                      ),
+                                                      transitionsBuilder: (_, animation, __, child) {
+                                                        return FadeTransition(opacity: animation, child: child);
+                                                      },
+                                                    ),
                                                   );
+                                                  if (deleted == true) {
+                                                    ref.invalidate(realtimeStoriesProvider);
+                                                    ref.invalidate(realtimeHasMyStoryProvider);
+                                                  }
                                                 },
                                               ),
                                           ],
@@ -370,7 +323,6 @@ class ChatHeader extends ConsumerWidget {
                                             for (int i = 0; i < others.length; i++)
                                               Builder(builder: (context) {
                                                 final s = others[i];
-                                                final sid = s['id'].toString();
                                                 final hasViewed = (s['hasViewed'] == true);
                                                 return Padding(
                                                   padding: const EdgeInsets.symmetric(horizontal: 7.0),
@@ -399,74 +351,20 @@ class ChatHeader extends ConsumerWidget {
                                                               ),
                                                               child: GestureDetector(
                                                                 onTap: () async {
-                                                                  final svc = ref.read(StoryService.storyServiceProvider);
-                                                                  await showDialog(
-                                                                    context: context,
-                                                                    barrierColor: Colors.black87,
-                                                                    builder: (_) {
-                                                                      final ctrl = PageController(initialPage: i);
-                                                                      int current = i;
-                                                                      return StatefulBuilder(
-                                                                        builder: (ctx, setState) {
-                                                                          void onChanged(int page) async {
-                                                                            current = page;
-                                                                            setState(() {});
-                                                                            final currentId = others[page]['id'].toString();
-                                                                            await svc.markViewed(storyId: currentId);
-                                                                          }
-                                                                          return Dialog(
-                                                                            backgroundColor: Colors.black,
-                                                                            insetPadding: const EdgeInsets.all(12),
-                                                                            child: Stack(
-                                                                              children: [
-                                                                                PageView.builder(
-                                                                                  controller: ctrl,
-                                                                                  onPageChanged: onChanged,
-                                                                                  itemCount: others.length,
-                                                                                  itemBuilder: (ctx, index) {
-                                                                                    final item = others[index];
-                                                                                    final mediaUrl = (item['media_url'] ?? '') as String;
-                                                                                    return AnimatedOpacity(
-                                                                                      duration: const Duration(milliseconds: 250),
-                                                                                      opacity: index == current ? 1.0 : 0.0,
-                                                                                      child: InteractiveViewer(
-                                                                                        child: Image.network(mediaUrl, fit: BoxFit.contain),
-                                                                                      ),
-                                                                                    );
-                                                                                  },
-                                                                                ),
-                                                                                Positioned(
-                                                                                  right: 8,
-                                                                                  top: 8,
-                                                                                  child: IconButton(
-                                                                                    icon: const Icon(Icons.close, color: Colors.white),
-                                                                                    onPressed: () => Navigator.of(context).pop(),
-                                                                                  ),
-                                                                                ),
-                                                                                Positioned(
-                                                                                  left: 8,
-                                                                                  top: 8,
-                                                                                  child: Container(
-                                                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                                                                    decoration: BoxDecoration(
-                                                                                      color: Colors.black54,
-                                                                                      borderRadius: BorderRadius.circular(8),
-                                                                                      border: Border.all(color: Colors.white24),
-                                                                                    ),
-                                                                                    child: Text(
-                                                                                      'Uploaded ${formatTimestamp((others[current]['created_at'] ?? '').toString())}',
-                                                                                      style: const TextStyle(color: Colors.white, fontSize: 12),
-                                                                                    ),
-                                                                                  ),
-                                                                                ),
-                                                                              ],
-                                                                            ),
-                                                                          );
-                                                                        },
-                                                                      );
-                                                                    },
+                                                                  await Navigator.of(context).push(
+                                                                    PageRouteBuilder(
+                                                                      opaque: false,
+                                                                      pageBuilder: (_, __, ___) => StoryViewerScreen(
+                                                                        stories: others,
+                                                                        initialIndex: i,
+                                                                        isOwnStory: false,
+                                                                      ),
+                                                                      transitionsBuilder: (_, animation, __, child) {
+                                                                        return FadeTransition(opacity: animation, child: child);
+                                                                      },
+                                                                    ),
                                                                   );
-                                                                  await svc.markViewed(storyId: sid);
+                                                                  ref.invalidate(realtimeStoriesProvider);
                                                                 },
                                                                 child: CircleAvatar(
                                                                   radius: 30,
