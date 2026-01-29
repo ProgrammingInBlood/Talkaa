@@ -20,41 +20,47 @@ class ChatBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final radius = _bubbleRadius(isMine, position);
+    final margin = switch (position) {
+      BubblePosition.single => const EdgeInsets.symmetric(vertical: 6),
+      BubblePosition.first => const EdgeInsets.only(top: 6, bottom: 2),
+      BubblePosition.middle => const EdgeInsets.symmetric(vertical: 2),
+      BubblePosition.last => const EdgeInsets.only(top: 2, bottom: 6),
+    };
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 6),
+      margin: margin,
       decoration: BoxDecoration(
         color: isMine
             ? cs.primary
             : (Theme.of(context).brightness == Brightness.dark
-                ? cs.surface
+                ? cs.surfaceContainerHighest
                 : Colors.white),
         borderRadius: radius,
         border: Border.all(
             color: isMine
                 ? cs.primary
                 : (Theme.of(context).brightness == Brightness.dark
-                    ? cs.onSurface.withValues(alpha: 0.12)
+                    ? cs.onSurface.withValues(alpha: 0.10)
                     : Colors.black12),
             width: 1),
         boxShadow: isMine
             ? [
                 BoxShadow(
-                  color: cs.primary.withValues(alpha: 0.15),
-                  blurRadius: 10,
-                  offset: const Offset(0, 6),
+                  color: cs.primary.withValues(alpha: 0.12),
+                  blurRadius: 8,
+                  offset: const Offset(0, 4),
                 ),
               ]
             : [
                 BoxShadow(
                   color: Theme.of(context).brightness == Brightness.dark
-                      ? Colors.black.withValues(alpha: 0.25)
-                      : Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 10,
-                  offset: const Offset(0, 6),
+                      ? Colors.black.withValues(alpha: 0.20)
+                      : Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 8,
+                  offset: const Offset(0, 4),
                 ),
               ],
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       child: child,
     );
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../providers.dart';
 
 final userProfileProvider = FutureProvider.family<Map<String, dynamic>?, String>((ref, userId) async {
@@ -14,6 +15,50 @@ final userProfileProvider = FutureProvider.family<Map<String, dynamic>?, String>
     return row;
   } catch (_) {
     return null;
+  }
+});
+
+// Provider to fetch shared media between current user and target user
+final sharedMediaProvider = FutureProvider.family<List<Map<String, dynamic>>, String>((ref, targetUserId) async {
+  final client = ref.read(supabaseProvider);
+  final myId = client.auth.currentUser?.id;
+  if (myId == null) return [];
+  
+  try {
+    // Find chats where both users are participants
+    final myChats = await client
+        .from('chat_participants')
+        .select('chat_id')
+        .eq('user_id', myId);
+    
+    final myChatIds = (myChats as List).map((e) => e['chat_id'] as String).toList();
+    if (myChatIds.isEmpty) return [];
+    
+    final theirChats = await client
+        .from('chat_participants')
+        .select('chat_id')
+        .eq('user_id', targetUserId)
+        .inFilter('chat_id', myChatIds);
+    
+    final sharedChatIds = (theirChats as List).map((e) => e['chat_id'] as String).toList();
+    if (sharedChatIds.isEmpty) return [];
+    
+    // Fetch all image messages from shared chats
+    final messages = await client
+        .from('messages')
+        .select('id, file_url, created_at, sender_id')
+        .inFilter('chat_id', sharedChatIds)
+        .eq('message_type', 'image')
+        .not('file_url', 'is', null)
+        .order('created_at', ascending: false)
+        .limit(50);
+    
+    return (messages as List)
+        .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e as Map))
+        .where((m) => (m['file_url'] as String?)?.isNotEmpty == true)
+        .toList();
+  } catch (_) {
+    return [];
   }
 });
 
@@ -33,36 +78,44 @@ class UserProfileScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
     final profileAsync = ref.watch(userProfileProvider(userId));
+    final sharedMediaAsync = ref.watch(sharedMediaProvider(userId));
 
     return Scaffold(
       backgroundColor: cs.surface,
       body: profileAsync.when(
         loading: () => _buildContent(
           context,
+          ref,
           cs,
           name: initialName ?? 'Loading...',
           avatarUrl: initialAvatar,
           isLoading: true,
+          sharedMedia: const [],
         ),
         error: (_, __) => _buildContent(
           context,
+          ref,
           cs,
           name: initialName ?? 'Unknown',
           avatarUrl: initialAvatar,
           error: 'Failed to load profile',
+          sharedMedia: const [],
         ),
         data: (profile) {
           if (profile == null) {
             return _buildContent(
               context,
+              ref,
               cs,
               name: initialName ?? 'Unknown',
               avatarUrl: initialAvatar,
               error: 'Profile not found',
+              sharedMedia: const [],
             );
           }
           return _buildContent(
             context,
+            ref,
             cs,
             name: profile['full_name'] ?? profile['username'] ?? initialName ?? 'Unknown',
             username: profile['username'],
@@ -70,6 +123,8 @@ class UserProfileScreen extends ConsumerWidget {
             bio: profile['bio'],
             createdAt: profile['created_at'],
             lastSeen: profile['last_seen'],
+            sharedMedia: sharedMediaAsync.value ?? const [],
+            isMediaLoading: sharedMediaAsync.isLoading,
           );
         },
       ),
@@ -78,6 +133,7 @@ class UserProfileScreen extends ConsumerWidget {
 
   Widget _buildContent(
     BuildContext context,
+    WidgetRef ref,
     ColorScheme cs, {
     required String name,
     String? username,
@@ -87,9 +143,12 @@ class UserProfileScreen extends ConsumerWidget {
     String? lastSeen,
     bool isLoading = false,
     String? error,
+    required List<Map<String, dynamic>> sharedMedia,
+    bool isMediaLoading = false,
   }) {
     final screenHeight = MediaQuery.of(context).size.height;
-    final avatarSize = screenHeight * 0.35;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final avatarSize = screenHeight * 0.38;
 
     return CustomScrollView(
       slivers: [
@@ -97,7 +156,7 @@ class UserProfileScreen extends ConsumerWidget {
           expandedHeight: avatarSize,
           pinned: true,
           stretch: true,
-          backgroundColor: cs.primary,
+          backgroundColor: const Color(0xFF7FA66A),
           foregroundColor: Colors.white,
           flexibleSpace: FlexibleSpaceBar(
             stretchModes: const [
@@ -108,6 +167,7 @@ class UserProfileScreen extends ConsumerWidget {
               name,
               style: const TextStyle(
                 fontWeight: FontWeight.w600,
+                fontSize: 18,
                 shadows: [
                   Shadow(color: Colors.black54, blurRadius: 4),
                 ],
@@ -132,10 +192,14 @@ class UserProfileScreen extends ConsumerWidget {
                   fit: StackFit.expand,
                   children: [
                     if (avatarUrl != null && avatarUrl.isNotEmpty)
-                      Image.network(
-                        avatarUrl,
+                      CachedNetworkImage(
+                        imageUrl: avatarUrl,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
+                        placeholder: (_, __) => Container(
+                          color: cs.primaryContainer,
+                          child: const Center(child: CircularProgressIndicator()),
+                        ),
+                        errorWidget: (_, __, ___) => Container(
                           color: cs.primaryContainer,
                           child: Icon(
                             Icons.person,
@@ -189,7 +253,7 @@ class UserProfileScreen extends ConsumerWidget {
                       children: [
                         Icon(Icons.error_outline, color: cs.onErrorContainer),
                         const SizedBox(width: 12),
-                        Text(error, style: TextStyle(color: cs.onErrorContainer)),
+                        Expanded(child: Text(error, style: TextStyle(color: cs.onErrorContainer))),
                       ],
                     ),
                   )
@@ -201,6 +265,46 @@ class UserProfileScreen extends ConsumerWidget {
                     ),
                   )
                 else ...[
+                  // Quick action buttons
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildActionButton(
+                        context,
+                        cs,
+                        icon: Icons.chat_bubble_outline_rounded,
+                        label: 'Message',
+                        onTap: () => Navigator.of(context).pop(),
+                      ),
+                      _buildActionButton(
+                        context,
+                        cs,
+                        icon: Icons.call_outlined,
+                        label: 'Audio',
+                        onTap: () => Navigator.of(context).pop(),
+                      ),
+                      _buildActionButton(
+                        context,
+                        cs,
+                        icon: Icons.videocam_outlined,
+                        label: 'Video',
+                        onTap: () => Navigator.of(context).pop(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  
+                  // Info section
+                  Text(
+                    'Info',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: cs.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  
                   if (username != null && username.isNotEmpty) ...[
                     _buildInfoCard(
                       context,
@@ -241,6 +345,70 @@ class UserProfileScreen extends ConsumerWidget {
                       value: _formatLastSeen(lastSeen),
                     ),
                   ],
+                  
+                  // Shared Media section
+                  const SizedBox(height: 28),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Shared Media',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: cs.onSurface,
+                        ),
+                      ),
+                      if (sharedMedia.isNotEmpty)
+                        Text(
+                          '${sharedMedia.length} items',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  if (isMediaLoading)
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(20),
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  else if (sharedMedia.isEmpty)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(32),
+                      decoration: BoxDecoration(
+                        color: cs.surfaceContainerHighest.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: cs.outlineVariant.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.photo_library_outlined,
+                            size: 48,
+                            color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'No shared media yet',
+                            style: TextStyle(
+                              color: cs.onSurfaceVariant,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    _buildMediaGrid(context, cs, sharedMedia, screenWidth),
                 ],
                 const SizedBox(height: 32),
               ],
@@ -248,6 +416,109 @@ class UserProfileScreen extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+  
+  Widget _buildActionButton(
+    BuildContext context,
+    ColorScheme cs, {
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: BoxDecoration(
+          color: cs.primaryContainer.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: cs.primary, size: 26),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: cs.primary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildMediaGrid(
+    BuildContext context,
+    ColorScheme cs,
+    List<Map<String, dynamic>> media,
+    double screenWidth,
+  ) {
+    final crossAxisCount = 3;
+    final spacing = 4.0;
+    final itemSize = (screenWidth - 40 - (spacing * (crossAxisCount - 1))) / crossAxisCount;
+    
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        crossAxisSpacing: spacing,
+        mainAxisSpacing: spacing,
+      ),
+      itemCount: media.length,
+      itemBuilder: (context, index) {
+        final item = media[index];
+        final imageUrl = item['file_url'] as String? ?? '';
+        
+        return GestureDetector(
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => FullScreenImageViewer(
+                  imageUrl: imageUrl,
+                  heroTag: 'shared_media_$index',
+                ),
+              ),
+            );
+          },
+          child: Hero(
+            tag: 'shared_media_$index',
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: CachedNetworkImage(
+                imageUrl: imageUrl,
+                fit: BoxFit.cover,
+                width: itemSize,
+                height: itemSize,
+                placeholder: (_, __) => Container(
+                  color: cs.surfaceContainerHighest,
+                  child: const Center(
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                ),
+                errorWidget: (_, __, ___) => Container(
+                  color: cs.surfaceContainerHighest,
+                  child: Icon(
+                    Icons.broken_image_outlined,
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 

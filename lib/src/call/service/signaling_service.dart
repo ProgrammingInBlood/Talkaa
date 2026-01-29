@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../model/call_state.dart';
+import '../../storage/signed_url_helper.dart';
 
 /// Represents a WebRTC signal from the database
 class WebRTCSignal {
@@ -272,7 +273,25 @@ class SignalingService {
         ''')
         .single();
 
-    return ActiveCall.fromJson(response);
+    return _signAvatarUrls(ActiveCall.fromJson(response));
+  }
+
+  /// Sign avatar URLs in an ActiveCall
+  Future<ActiveCall> _signAvatarUrls(ActiveCall call) async {
+    String? callerAvatar = call.callerAvatar;
+    String? calleeAvatar = call.calleeAvatar;
+    
+    if (callerAvatar != null && callerAvatar.isNotEmpty && !callerAvatar.startsWith('http')) {
+      callerAvatar = await SignedUrlHelper.getAvatarUrl(_client, callerAvatar);
+    }
+    if (calleeAvatar != null && calleeAvatar.isNotEmpty && !calleeAvatar.startsWith('http')) {
+      calleeAvatar = await SignedUrlHelper.getAvatarUrl(_client, calleeAvatar);
+    }
+    
+    return call.copyWith(
+      callerAvatar: callerAvatar,
+      calleeAvatar: calleeAvatar,
+    );
   }
 
   /// Get an existing active call
@@ -289,7 +308,7 @@ class SignalingService {
           .maybeSingle();
 
       if (response == null) return null;
-      return ActiveCall.fromJson(response);
+      return _signAvatarUrls(ActiveCall.fromJson(response));
     } catch (e) {
       debugPrint('SignalingService: Error getting call: $e');
       return null;

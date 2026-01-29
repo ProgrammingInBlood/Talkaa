@@ -36,6 +36,7 @@ class WebRTCConfig {
       },
     ],
     'sdpSemantics': 'unified-plan',
+    'iceCandidatePoolSize': 2,
   };
 
   static const Map<String, dynamic> offerSdpConstraints = {
@@ -232,15 +233,22 @@ class WebRTCService {
     };
   }
 
-  /// Get user media (camera/microphone)
+  /// Get user media (camera/microphone) with adaptive quality for Android Go
   Future<void> _getUserMedia(CallType type) async {
+    // Use lower resolution for better performance on low-end devices
+    // Android Go devices typically have limited RAM and processing power
     final Map<String, dynamic> constraints = {
-      'audio': true,
+      'audio': {
+        'echoCancellation': true,
+        'noiseSuppression': true,
+        'autoGainControl': true,
+      },
       'video': type == CallType.video
           ? {
               'facingMode': 'user',
-              'width': {'ideal': 1280},
-              'height': {'ideal': 720},
+              'width': {'ideal': 640, 'max': 1280},
+              'height': {'ideal': 480, 'max': 720},
+              'frameRate': {'ideal': 24, 'max': 30},
             }
           : false,
     };

@@ -68,7 +68,7 @@ class CallActionReceiver : BroadcastReceiver() {
     
     private fun launchAppWithAction(ctx: Context, action: String, callId: String) {
         try {
-            val launchIntent = Intent(ctx, MainActivity::class.java).apply {
+            val launchIntent = Intent(ctx, CallActivity::class.java).apply {
                 this.action = action
                 putExtra(CallForegroundService.EXTRA_CALL_ID, callId)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)

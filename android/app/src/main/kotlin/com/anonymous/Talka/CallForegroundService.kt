@@ -35,6 +35,9 @@ class CallForegroundService : Service() {
         const val ACTION_DECLINE = "com.anonymous.talka.ACTION_DECLINE"
         const val ACTION_OPEN = "com.anonymous.talka.ACTION_OPEN_CALL"
         const val ACTION_HANGUP = "com.anonymous.talka.ACTION_HANGUP"
+        const val ACTION_START = "com.anonymous.talka.START_CALL_SERVICE"
+        const val ACTION_STOP = "com.anonymous.talka.STOP_CALL_SERVICE"
+        const val NOTIFICATION_ID = 9999
     }
 
     // Added state to manage notification updates and timeout
@@ -48,6 +51,13 @@ class CallForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Handle stop action
+        if (intent?.action == ACTION_STOP) {
+            cancelAllNotifications()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        
         val callerName = intent?.getStringExtra(EXTRA_CALLER_NAME) ?: "Incoming call"
         val callId = intent?.getStringExtra(EXTRA_CALL_ID) ?: System.currentTimeMillis().toString()
         val avatarUrl = intent?.getStringExtra(EXTRA_AVATAR_URL)
@@ -92,7 +102,7 @@ class CallForegroundService : Service() {
         val contentIntent = PendingIntent.getActivity(
             this,
             1000 + callId.hashCode(),
-            Intent(this, MainActivity::class.java).apply {
+            Intent(this, CallActivity::class.java).apply {
                 action = ACTION_OPEN
                 putExtra(EXTRA_CALL_ID, callId)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -227,9 +237,14 @@ class CallForegroundService : Service() {
             }
         }
 
-        // Full-screen incoming only
+        // Full-screen incoming only - check permission on Android 14+
         if (Build.VERSION.SDK_INT >= 29 && styleParam == "incoming") {
-            builder.setFullScreenIntent(contentIntent, true)
+            if (canUseFullScreenIntent()) {
+                builder.setFullScreenIntent(contentIntent, true)
+            } else {
+                // If full-screen intent not allowed, still make it high priority
+                builder.setPriority(Notification.PRIORITY_MAX)
+            }
         }
         if (Build.VERSION.SDK_INT >= 34) {
             builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
@@ -260,7 +275,7 @@ class CallForegroundService : Service() {
                         try {
                             // Handle locked screen scenarios
                             val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-                            val open = Intent(this, MainActivity::class.java).apply {
+                            val open = Intent(this, CallActivity::class.java).apply {
                                 action = ACTION_OPEN
                                 putExtra(EXTRA_CALL_ID, callId)
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -272,8 +287,11 @@ class CallForegroundService : Service() {
                                     addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
                                 }
                             }
+                            android.util.Log.d("CallForegroundService", "Launching CallActivity: action=${open.action}, callId=$callId, EXTRA_CALL_ID=$EXTRA_CALL_ID")
                             startActivity(open)
-                        } catch (_: Exception) {}
+                        } catch (e: Exception) {
+                            android.util.Log.e("CallForegroundService", "Failed to launch CallActivity", e)
+                        }
                     }
                 }
             } else {
@@ -287,7 +305,7 @@ class CallForegroundService : Service() {
                         try {
                             // Handle locked screen scenarios
                             val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-                            val open = Intent(this, MainActivity::class.java).apply {
+                            val open = Intent(this, CallActivity::class.java).apply {
                                 action = ACTION_OPEN
                                 putExtra(EXTRA_CALL_ID, callId)
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -299,8 +317,11 @@ class CallForegroundService : Service() {
                                     addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
                                 }
                             }
+                            android.util.Log.d("CallForegroundService", "Launching CallActivity (alt): action=${open.action}, callId=$callId, EXTRA_CALL_ID=$EXTRA_CALL_ID")
                             startActivity(open)
-                        } catch (_: Exception) {}
+                        } catch (e: Exception) {
+                            android.util.Log.e("CallForegroundService", "Failed to launch CallActivity (alt)", e)
+                        }
                     }
                 }
             }
@@ -428,11 +449,31 @@ class CallForegroundService : Service() {
             wakeLock = null
         } catch (_: Exception) {}
         
+        cancelAllNotifications()
+        
+        super.onDestroy()
+    }
+    
+    private fun cancelAllNotifications() {
         try {
             stopForeground(true)
         } catch (_: Exception) {}
         
-        super.onDestroy()
+        try {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            // Cancel by last notification ID (callId.hashCode())
+            if (lastNotificationId != 0) {
+                nm.cancel(lastNotificationId)
+            }
+            // Also cancel by fixed NOTIFICATION_ID as fallback
+            nm.cancel(NOTIFICATION_ID)
+            // Cancel current call ID hash
+            currentCallId?.let { nm.cancel(it.hashCode()) }
+        } catch (_: Exception) {}
+        
+        startedForeground = false
+        currentCallId = null
+        lastNotificationId = 0
     }
 
     private fun ensureCallNotificationChannel(context: Context) {
@@ -524,5 +565,18 @@ class CallForegroundService : Service() {
                 screenLock.release()
             }
         } catch (_: Exception) {}
+    }
+    
+    private fun canUseFullScreenIntent(): Boolean {
+        return if (Build.VERSION.SDK_INT >= 34) {
+            try {
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                nm.canUseFullScreenIntent()
+            } catch (_: Exception) {
+                true
+            }
+        } else {
+            true
+        }
     }
 }

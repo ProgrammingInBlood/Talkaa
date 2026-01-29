@@ -82,13 +82,10 @@ class _SetupProfilePageState extends ConsumerState<SetupProfilePage> {
       
       debugPrint('Upload result: $uploadResult');
       
-      final publicUrl = client.storage
-          .from('avatar')
-          .getPublicUrl(fileName);
+      // Store only the path, not full URL (signed URLs generated on display)
+      debugPrint('Stored path: $fileName');
       
-      debugPrint('Public URL: $publicUrl');
-      
-      return publicUrl;
+      return fileName;
     } catch (e) {
       debugPrint('Error uploading avatar: $e');
       if (mounted) {

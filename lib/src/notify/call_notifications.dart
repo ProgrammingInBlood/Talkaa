@@ -54,22 +54,28 @@ class CallNotifications {
     });
 
     // Also listen to headless-native bridge actions
+    debugPrint('CallNotifications: Setting up bridge channel handler');
     _bridgeChannel.setMethodCallHandler((MethodCall call) async {
+      debugPrint('CallNotifications: Bridge channel received: ${call.method}');
       try {
         if (call.method == 'call.onAction') {
           final args = Map<String, dynamic>.from(call.arguments as Map);
           final String action = (args['action']?.toString() ?? '').toLowerCase();
           final String? callId = args['callId']?.toString();
+          debugPrint('CallNotifications: Bridge onAction: action=$action, callId=$callId');
           if (action.isNotEmpty) {
+            debugPrint('CallNotifications: Adding action to stream');
             _actions.add(CallAction(action: action, callId: callId));
           }
         } else if (call.method == 'call.onTimeout') {
           final args = Map<String, dynamic>.from(call.arguments as Map);
           final String? callId = args['callId']?.toString();
-          // Propagate timeout as an action for higher-level handling
+          debugPrint('CallNotifications: Bridge onTimeout: callId=$callId');
           _actions.add(CallAction(action: 'timeout', callId: callId));
         }
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('CallNotifications: Bridge channel error: $e');
+      }
     });
     // Fetch any pending startup action (cold start from notification tap)
     // is now handled explicitly by CallService after it binds listeners via
@@ -98,6 +104,15 @@ class CallNotifications {
       });
     } catch (e) {
       debugPrint('endCallNotification invoke failed: $e');
+    }
+  }
+
+  static Future<void> closeCallActivity() async {
+    try {
+      debugPrint('CallNotifications: closing CallActivity');
+      await _channel.invokeMethod('closeCallActivity');
+    } catch (e) {
+      debugPrint('closeCallActivity invoke failed: $e');
     }
   }
 }

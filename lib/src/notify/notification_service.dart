@@ -186,6 +186,8 @@ class NotificationService {
     required String senderName,
     required String content,
     String? avatarUrl,
+    String? imageUrl,
+    String? messageType,
   }) async {
     // Check if user is currently viewing this conversation - don't show notification
     // Use async check which also reads from SharedPreferences for reliability
@@ -216,6 +218,10 @@ class NotificationService {
       ),
     ];
 
+    final effectiveContent = content.isNotEmpty
+        ? content
+        : (messageType == 'image' ? 'Photo' : 'New message');
+
     // Download and convert avatar to circular bitmap
     AndroidBitmap<Object>? largeIcon;
     if (avatarUrl != null && avatarUrl.trim().isNotEmpty) {
@@ -234,10 +240,26 @@ class NotificationService {
       }
     }
 
+    // Download image for big picture style (if enabled)
+    AndroidBitmap<Object>? bigPicture;
+    if (previewEnabled &&
+        imageUrl != null &&
+        imageUrl.trim().isNotEmpty &&
+        messageType == 'image') {
+      try {
+        final response = await http.get(Uri.parse(imageUrl.trim()));
+        if (response.statusCode == 200) {
+          bigPicture = ByteArrayAndroidBitmap(response.bodyBytes);
+        }
+      } catch (e) {
+        debugPrint('Failed to load image preview: $e');
+      }
+    }
+
     // Add message to cache for WhatsApp-style accumulation
     _messageCache.putIfAbsent(chatId, () => []);
     _messageCache[chatId]!.add(_CachedMessage(
-      content: content,
+      content: effectiveContent,
       senderName: senderName,
       timestamp: DateTime.now(),
     ));
@@ -259,10 +281,29 @@ class NotificationService {
     )).toList();
 
     // Apply preview setting - hide content if disabled
-    final displayContent = previewEnabled ? content : 'New message';
-    final displayMessages = previewEnabled 
-        ? messagingStyleMessages 
+    final displayContent = previewEnabled ? effectiveContent : 'New message';
+    final displayMessages = previewEnabled
+        ? messagingStyleMessages
         : [Message('New message', DateTime.now(), Person(name: senderName, bot: false))];
+
+    final StyleInformation styleInformation = bigPicture != null
+        ? BigPictureStyleInformation(
+            bigPicture,
+            largeIcon: largeIcon,
+            contentTitle: senderName,
+            summaryText: displayContent,
+            hideExpandedLargeIcon: true,
+          )
+        : MessagingStyleInformation(
+            Person(
+              name: senderName,
+              bot: false,
+              important: true,
+            ),
+            conversationTitle: senderName,
+            groupConversation: false,
+            messages: displayMessages,
+          );
 
     final androidDetails = AndroidNotificationDetails(
       chatChannelId,
@@ -279,16 +320,7 @@ class NotificationService {
       number: messageCount,
       playSound: soundEnabled,
       enableVibration: vibrationEnabled,
-      styleInformation: MessagingStyleInformation(
-        Person(
-          name: senderName,
-          bot: false,
-          important: true,
-        ),
-        conversationTitle: senderName,
-        groupConversation: false,
-        messages: displayMessages,
-      ),
+      styleInformation: styleInformation,
     );
     final iosDetails = DarwinNotificationDetails(
       categoryIdentifier: chatCategoryId,
@@ -385,13 +417,31 @@ class NotificationService {
     } catch (_) {}
   }
 
-  static Future<void> _onNotificationResponse(NotificationResponse response) async {
+  static Future<void> _onNotificationResponse(
+    NotificationResponse response,
+  ) async {
+    await _handleNotificationResponse(response, awaitReply: false);
+  }
+
+  static Future<void> handleBackgroundNotificationResponse(
+    NotificationResponse response,
+  ) async {
+    await _handleNotificationResponse(response, awaitReply: true);
+  }
+
+  static Future<void> _handleNotificationResponse(
+    NotificationResponse response, {
+    required bool awaitReply,
+  }) async {
     try {
       debugPrint('Notification response: action=${response.actionId ?? ''}, input=${response.input ?? ''}');
-      final Map<String, dynamic> data = response.payload != null ? jsonDecode(response.payload!) : {};
+      final Map<String, dynamic> data = response.payload != null
+          ? jsonDecode(response.payload!)
+          : {};
       final chatId = data['chat_id'] as String?;
       final text = response.input ?? '';
       final supabaseUrl = (data['supabase_url'] as String?)?.trim();
+      final anonKey = (data['supabase_anon_key'] as String?)?.trim();
       final accessToken = (data['access_token'] as String?)?.trim();
 
       // Handle call actions from fallback incoming call notification
@@ -407,26 +457,42 @@ class NotificationService {
         CallNotifications.emitAction(CallAction(action: 'decline', callId: callId));
         return;
       }
-      if ((response.actionId == null || response.actionId!.isEmpty) && type == 'call_invite' && callId != null) {
+      if ((response.actionId == null || response.actionId!.isEmpty) &&
+          type == 'call_invite' &&
+          callId != null) {
         CallNotifications.emitAction(CallAction(action: 'open', callId: callId));
         return;
       }
 
       // Inline reply for chat
-      if (response.actionId == replyActionId && chatId != null && text.trim().isNotEmpty) {
+      if (response.actionId == replyActionId &&
+          chatId != null &&
+          text.trim().isNotEmpty) {
         unawaited(_fln.cancel(chatId.hashCode));
         debugPrint('Inline reply sending: chatId=$chatId, length=${text.trim().length.toString()}');
-        unawaited(_sendReply(
-          chatId: chatId,
-          text: text.trim(),
-          supabaseUrl: supabaseUrl,
-          accessToken: accessToken,
-        ));
+        if (awaitReply) {
+          await _sendReply(
+            chatId: chatId,
+            text: text.trim(),
+            supabaseUrl: supabaseUrl,
+            anonKey: anonKey,
+            accessToken: accessToken,
+          );
+        } else {
+          unawaited(_sendReply(
+            chatId: chatId,
+            text: text.trim(),
+            supabaseUrl: supabaseUrl,
+            anonKey: anonKey,
+            accessToken: accessToken,
+          ));
+        }
         return;
       }
 
       // Handle notification tap (no action, just tap on notification body)
-      if ((response.actionId == null || response.actionId!.isEmpty) && chatId != null) {
+      if ((response.actionId == null || response.actionId!.isEmpty) &&
+          chatId != null) {
         debugPrint('NotificationService: Notification tapped for chat: $chatId');
         // Cancel the notification
         unawaited(_fln.cancel(chatId.hashCode));
@@ -448,10 +514,22 @@ class NotificationService {
       final navigator = appNavigatorKey.currentState;
       if (navigator != null) {
         debugPrint('NotificationService: Navigating to conversation: $chatId');
-        navigator.push(
+        
+        // Check if conversation is already on top of stack
+        final currentRoute = ModalRoute.of(navigator.context);
+        if (currentRoute?.settings.name == chatId || 
+            currentRoute?.settings.arguments == chatId) {
+          debugPrint('NotificationService: Conversation already open, not creating duplicate');
+          return;
+        }
+        
+        // Push without creating duplicates - keep home route
+        navigator.pushAndRemoveUntil(
           MaterialPageRoute(
             builder: (_) => ConversationPage(conversationId: chatId),
+            settings: RouteSettings(name: chatId, arguments: chatId),
           ),
+          (route) => route.isFirst, // Keep only the first (home) route
         );
       } else {
         debugPrint('NotificationService: Navigator not available, storing pending navigation');
@@ -471,10 +549,71 @@ class NotificationService {
     return chatId;
   }
 
+  static Future<String?> _resolveAccessToken({
+    String? accessToken,
+    String? supabaseUrl,
+    String? anonKey,
+  }) async {
+    final provided = accessToken?.trim();
+    if (provided != null && provided.isNotEmpty) {
+      return provided;
+    }
+
+    final baseUrl =
+        (supabaseUrl ?? _supabaseUrl ?? kSupabaseUrl).trim();
+    final baseKey = (anonKey ?? _anonKey ?? kSupabaseAnonKey).trim();
+    if (baseUrl.isEmpty || baseKey.isEmpty) {
+      return null;
+    }
+
+    SupabaseClient? client;
+    try {
+      client = Supabase.instance.client;
+    } catch (_) {}
+
+    if (client == null) {
+      try {
+        await Supabase.initialize(
+          url: baseUrl,
+          anonKey: baseKey,
+          authOptions: const FlutterAuthClientOptions(
+            autoRefreshToken: true,
+            detectSessionInUri: false,
+          ),
+        );
+        client = Supabase.instance.client;
+      } catch (e) {
+        debugPrint('Reply token init error: $e');
+      }
+    }
+
+    if (client == null) {
+      return null;
+    }
+
+    final session = client.auth.currentSession;
+    if (session != null && session.accessToken.isNotEmpty) {
+      return session.accessToken;
+    }
+
+    try {
+      final refreshed = await client.auth.refreshSession();
+      final token = refreshed.session?.accessToken;
+      if (token != null && token.isNotEmpty) {
+        return token;
+      }
+    } catch (e) {
+      debugPrint('Reply token refresh error: $e');
+    }
+
+    return client.auth.currentSession?.accessToken;
+  }
+
   static Future<void> _sendReply({
     required String chatId,
     required String text,
     String? supabaseUrl,
+    String? anonKey,
     String? accessToken,
   }) async {
     try {
@@ -490,8 +629,12 @@ class NotificationService {
       final projectRef = host.split('.').first;
       final fnUrl = Uri.parse('https://$projectRef.functions.supabase.co/notification_reply');
 
-      final token = (accessToken ?? '').trim();
-      if (token.isEmpty) {
+      final token = await _resolveAccessToken(
+        accessToken: accessToken,
+        supabaseUrl: supabaseUrl,
+        anonKey: anonKey,
+      );
+      if (token == null || token.isEmpty) {
         debugPrint('Reply skipped: missing access token');
         return;
       }
@@ -533,7 +676,7 @@ class _CachedMessage {
 }
 
 @pragma('vm:entry-point')
-void notificationTapBackground(NotificationResponse response) {
+Future<void> notificationTapBackground(NotificationResponse response) async {
   try {
     debugPrint('notificationTapBackground invoked: action=${response.actionId ?? ''}');
     if (!kIsWeb) {
@@ -541,7 +684,7 @@ void notificationTapBackground(NotificationResponse response) {
       DartPluginRegistrant.ensureInitialized();
       debugPrint('notificationTapBackground: Flutter bindings initialized');
     }
-    unawaited(NotificationService._onNotificationResponse(response));
+    await NotificationService.handleBackgroundNotificationResponse(response);
   } catch (e, st) {
     debugPrint('background response error: ${e.toString()}');
     debugPrint('background response stack: ${st.toString()}');

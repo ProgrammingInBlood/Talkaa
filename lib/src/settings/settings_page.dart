@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers.dart';
 import '../profile/user_profile_provider.dart';
+import '../storage/signed_url_helper.dart';
 import 'theme_controller.dart';
 import 'edit_profile_page.dart';
 import 'notification_settings_page.dart';
@@ -18,9 +19,10 @@ final currentUserAvatarUrlProvider = FutureProvider<String?>((ref) async {
         .select('avatar_url')
         .eq('id', userId)
         .maybeSingle();
-    final url = row?['avatar_url'] as String?;
-    if (url != null && url.trim().isNotEmpty) {
-      return url.trim();
+    final path = row?['avatar_url'] as String?;
+    if (path != null && path.trim().isNotEmpty) {
+      // Sign the avatar URL
+      return await SignedUrlHelper.getAvatarUrl(client, path.trim());
     }
   } catch (_) {}
   return null;
@@ -40,6 +42,7 @@ class SettingsPage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
+        centerTitle: true,
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -158,25 +161,30 @@ class SettingsPage extends ConsumerWidget {
                     );
                   },
                 ),
-                if (Platform.isAndroid) ...[
-                  const Divider(height: 0),
+                if (Platform.isAndroid)
                   FutureBuilder<bool>(
                     future: AutoStartHelper.isAutoStartAvailable(),
                     builder: (context, snapshot) {
                       if (snapshot.data != true) return const SizedBox.shrink();
-                      return ListTile(
-                        leading: const Icon(Icons.rocket_launch_outlined),
-                        title: const Text('Auto-Start'),
-                        subtitle: const Text('Enable background start for calls'),
-                        trailing: Icon(
-                          Icons.chevron_right,
-                          color: cs.onSurface.withValues(alpha: 0.5),
-                        ),
-                        onTap: () => AutoStartHelper.showAutoStartDialog(context),
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Divider(height: 0),
+                          ListTile(
+                            leading: const Icon(Icons.rocket_launch_outlined),
+                            title: const Text('Auto-Start'),
+                            subtitle: const Text('Enable background start for calls'),
+                            trailing: Icon(
+                              Icons.chevron_right,
+                              color: cs.onSurface.withValues(alpha: 0.5),
+                            ),
+                            onTap: () =>
+                                AutoStartHelper.showAutoStartDialog(context),
+                          ),
+                        ],
                       );
                     },
                   ),
-                ],
               ],
             ),
           ),

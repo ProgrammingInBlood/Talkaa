@@ -4,10 +4,38 @@ import android.content.Intent
 import android.util.Log
 import android.app.NotificationManager
 import android.content.Context
+import android.content.SharedPreferences
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
+    
+    companion object {
+        private const val PREFS_NAME = "FlutterSharedPreferences"
+        private const val ACTIVE_CHAT_KEY = "flutter.active_chat_id"
+        private const val ACTIVE_CHAT_TIME_KEY = "flutter.active_chat_id_time"
+    }
+    
+    private fun isActiveChatId(chatId: String): Boolean {
+        try {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val storedChatId = prefs.getString(ACTIVE_CHAT_KEY, null)
+            val storedTime = prefs.getLong(ACTIVE_CHAT_TIME_KEY, 0L)
+            
+            if (storedChatId == chatId && storedTime > 0) {
+                // Check if stored value is recent (within 5 minutes)
+                val age = System.currentTimeMillis() - storedTime
+                if (age < 5 * 60 * 1000) {
+                    Log.d("MyFcmService", "Chat $chatId is active (age=${age/1000}s)")
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MyFcmService", "Error checking active chat: ${e.message}")
+        }
+        return false
+    }
+    
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         try {
             val data = remoteMessage.data
@@ -69,12 +97,33 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 try {
                     val ctx: Context = this
                     val callId = (data["session_id"] ?: data["callId"] ?: data["call_id"] ?: System.currentTimeMillis().toString()).toString()
+                    
+                    // Cancel notification
                     val mgr = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                     mgr.cancel(callId.hashCode())
-                    val intent = Intent(ctx, CallForegroundService::class.java)
+                    mgr.cancel(CallForegroundService.NOTIFICATION_ID)
+                    
+                    // Stop foreground service with ACTION_STOP
+                    val intent = Intent(ctx, CallForegroundService::class.java).apply {
+                        action = CallForegroundService.ACTION_STOP
+                    }
                     ctx.stopService(intent)
+                    
+                    // Also notify Flutter via CallFlutterBridge
+                    CallFlutterBridge.sendActionToDart("remote_end", callId)
                 } catch (_: Exception) {}
                 return
+            }
+            
+            // Check for chat messages and suppress if user is in that conversation
+            val chatId = (data["chat_id"] ?: "").toString()
+            if (chatId.isNotEmpty() && typeRaw.isEmpty()) {
+                // This is a chat message - check if user is viewing this conversation
+                if (isActiveChatId(chatId)) {
+                    Log.d("MyFcmService", "Suppressing notification for active chat: $chatId")
+                    return
+                }
+                // Let Flutter handle showing the notification
             }
         } catch (e: Exception) {
             Log.e("MyFcmService", "onMessageReceived error: ${e.message}", e)

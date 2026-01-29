@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../ui/image_viewer.dart';
-import '../chat_utils.dart';
 import 'message_bubble.dart';
 
 enum _BubblePosition { single, first, middle, last }
@@ -11,12 +11,16 @@ class MessageList extends StatelessWidget {
   final List<Map<String, dynamic>> messages;
   final ScrollController scrollController;
   final SupabaseClient client;
+  final void Function(Map<String, dynamic> message)? onReply;
+  final void Function(String messageId)? onDelete;
 
   const MessageList({
     super.key,
     required this.messages,
     required this.scrollController,
     required this.client,
+    this.onReply,
+    this.onDelete,
   });
 
   DateTime _parseDate(String? dateStr) {
@@ -30,6 +34,10 @@ class MessageList extends StatelessWidget {
 
   bool _isSameDay(DateTime a, DateTime b) {
     return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  String _formatMessageTime(DateTime date) {
+    return DateFormat('HH:mm').format(date.toLocal());
   }
 
   String _formatDayLabel(DateTime date) {
@@ -48,18 +56,38 @@ class MessageList extends StatelessWidget {
   }
 
   Widget _buildReadReceiptIcon(Map<String, dynamic> message, BuildContext context) {
+    final messageId = message['id'];
     final readAt = message['read_at'];
+    final deliveredAt = message['delivered_at'];
+    
+    // Message not yet saved to server (optimistic update)
+    if (messageId == null) {
+      return const Icon(
+        Icons.access_time,
+        size: 14,
+        color: Colors.white54,
+      );
+    }
+    
     final isRead = readAt != null && readAt.toString().isNotEmpty;
+    final isDelivered = deliveredAt != null && deliveredAt.toString().isNotEmpty;
     
     if (isRead) {
-      // Double check mark (read)
+      // Double blue tick (read)
       return const Icon(
         Icons.done_all,
         size: 16,
-        color: Color(0xFF34B7F1), // Blue tick color like WhatsApp
+        color: Color(0xFF34B7F1),
+      );
+    } else if (isDelivered) {
+      // Double gray tick (delivered but not read)
+      return const Icon(
+        Icons.done_all,
+        size: 16,
+        color: Colors.white70,
       );
     } else {
-      // Single check mark (sent but not read)
+      // Single gray tick (sent to server)
       return const Icon(
         Icons.check,
         size: 16,
@@ -80,10 +108,10 @@ class MessageList extends StatelessWidget {
             reverse: true,
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             padding: EdgeInsets.only(
-              left: 12,
-              right: 12,
-              top: 8,
-              bottom: MediaQuery.of(context).padding.bottom,
+              left: 16,
+              right: 16,
+              top: 12,
+              bottom: MediaQuery.of(context).padding.bottom + 8,
             ),
             addAutomaticKeepAlives: false,
             addRepaintBoundaries: true,
@@ -116,6 +144,7 @@ class MessageList extends StatelessWidget {
                       : (contiguousPrev && contiguousNext)
                           ? _BubblePosition.middle
                           : _BubblePosition.last;
+              final showMeta = pos == _BubblePosition.single || pos == _BubblePosition.last;
 
               // Convert to the imported BubblePosition enum
               final BubblePosition bubblePos = switch (pos) {
@@ -166,12 +195,19 @@ class MessageList extends StatelessWidget {
                   ],
                   Align(
                     alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
-                    child: ChatBubble(
-                      isMine: isMine,
-                      position: bubblePos,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
+                    child: GestureDetector(
+                      onLongPress: () => _showMessageOptions(context, m, isMine),
+                      child: ChatBubble(
+                        isMine: isMine,
+                        position: bubblePos,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Show reply preview if this message is a reply
+                            if (m['reply_to_id'] != null) ...[
+                              _buildReplyPreview(context, m['reply_to_id'], isMine),
+                              const SizedBox(height: 6),
+                            ],
                           if (((m['file_url'] ?? '') as String).isNotEmpty) ...[
                             ConstrainedBox(
                               constraints: const BoxConstraints(maxWidth: 280),
@@ -220,26 +256,29 @@ class MessageList extends StatelessWidget {
                                   height: 1.2,
                                 ),
                           ),
-                          const SizedBox(height: 6),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                formatTimestamp((m['created_at'] ?? '').toString()),
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                           color: isMine
-                                               ? Colors.white70
-                                               : cs.onSurface.withValues(alpha: 0.65),
-                                      fontFamily: 'Roboto',
-                                    ),
-                              ),
-                              if (isMine) ...[
-                                const SizedBox(width: 6),
-                                _buildReadReceiptIcon(m, context),
+                          if (showMeta) ...[
+                            const SizedBox(height: 6),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _formatMessageTime(currAt),
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                             color: isMine
+                                                 ? Colors.white70
+                                                 : cs.onSurface.withValues(alpha: 0.65),
+                                        fontFamily: 'Roboto',
+                                      ),
+                                ),
+                                if (isMine) ...[
+                                  const SizedBox(width: 6),
+                                  _buildReadReceiptIcon(m, context),
+                                ],
                               ],
-                            ],
-                          ),
-                        ],
+                            ),
+                          ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -249,6 +288,157 @@ class MessageList extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+  
+  void _showMessageOptions(BuildContext context, Map<String, dynamic> message, bool isMine) {
+    final cs = Theme.of(context).colorScheme;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: cs.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: cs.onSurface.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              ListTile(
+                leading: Icon(Icons.reply_rounded, color: cs.primary),
+                title: const Text('Reply'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  onReply?.call(message);
+                },
+              ),
+              if (isMine) ...[
+                ListTile(
+                  leading: Icon(Icons.delete_outline_rounded, color: Colors.red.shade400),
+                  title: Text('Delete', style: TextStyle(color: Colors.red.shade400)),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _confirmDelete(context, message);
+                  },
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  
+  void _confirmDelete(BuildContext context, Map<String, dynamic> message) {
+    final cs = Theme.of(context).colorScheme;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: cs.surface,
+        title: const Text('Delete Message'),
+        content: const Text('Are you sure you want to delete this message?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              final messageId = message['id']?.toString();
+              if (messageId != null) {
+                onDelete?.call(messageId);
+              }
+            },
+            child: Text('Delete', style: TextStyle(color: Colors.red.shade400)),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildReplyPreview(BuildContext context, String replyToId, bool isMine) {
+    final cs = Theme.of(context).colorScheme;
+    // Find the replied message in our messages list
+    final repliedMessage = messages.where((m) => m['id'] == replyToId).firstOrNull;
+    
+    if (repliedMessage == null) {
+      return Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: isMine 
+              ? Colors.white.withValues(alpha: 0.15)
+              : cs.primary.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border(
+            left: BorderSide(
+              color: isMine ? Colors.white70 : cs.primary,
+              width: 3,
+            ),
+          ),
+        ),
+        child: Text(
+          'Original message',
+          style: TextStyle(
+            fontSize: 12,
+            fontStyle: FontStyle.italic,
+            color: isMine ? Colors.white70 : cs.onSurface.withValues(alpha: 0.6),
+          ),
+        ),
+      );
+    }
+    
+    final content = (repliedMessage['content'] ?? '').toString();
+    final hasImage = ((repliedMessage['file_url'] ?? '') as String).isNotEmpty;
+    
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: isMine 
+            ? Colors.white.withValues(alpha: 0.15)
+            : cs.primary.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(
+            color: isMine ? Colors.white70 : cs.primary,
+            width: 3,
+          ),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (hasImage) ...[
+            Icon(
+              Icons.image_rounded,
+              size: 16,
+              color: isMine ? Colors.white70 : cs.onSurface.withValues(alpha: 0.6),
+            ),
+            const SizedBox(width: 4),
+          ],
+          Flexible(
+            child: Text(
+              content.isNotEmpty ? content : (hasImage ? 'Photo' : 'Message'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                color: isMine ? Colors.white70 : cs.onSurface.withValues(alpha: 0.6),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

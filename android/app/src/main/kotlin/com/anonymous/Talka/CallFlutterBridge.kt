@@ -78,27 +78,38 @@ object CallFlutterBridge {
     }
 
     fun sendActionToDart(action: String, callId: String): Boolean {
+        android.util.Log.d("CallFlutterBridge", "sendActionToDart: action=$action, callId=$callId, isFlutterAttached=$isFlutterAttached, channel=${channel != null}")
         val args = mapOf("action" to action, "callId" to callId)
         
         // Try to send via existing channel first
         if (isFlutterAttached && channel != null) {
             try {
+                android.util.Log.d("CallFlutterBridge", "Sending via existing channel")
                 channel?.invokeMethod("call.onAction", args)
+                android.util.Log.d("CallFlutterBridge", "Sent via existing channel successfully")
                 return true
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                android.util.Log.e("CallFlutterBridge", "Failed to send via existing channel", e)
+            }
         }
         
         // Try cached engine
         try {
             val engine = FlutterEngineCache.getInstance().get("app_call_engine")
+            android.util.Log.d("CallFlutterBridge", "Trying cached engine: ${engine != null}")
             if (engine != null) {
                 val ch = MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
+                android.util.Log.d("CallFlutterBridge", "Sending via cached engine channel")
                 ch.invokeMethod("call.onAction", args)
+                android.util.Log.d("CallFlutterBridge", "Sent via cached engine successfully")
                 return true
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            android.util.Log.e("CallFlutterBridge", "Failed to send via cached engine", e)
+        }
         
         // Flutter not available - store pending action for when app starts
+        android.util.Log.d("CallFlutterBridge", "Storing pending action for later")
         storePendingAction(action, callId)
         return false
     }

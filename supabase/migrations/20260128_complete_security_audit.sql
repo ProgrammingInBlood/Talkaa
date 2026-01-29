@@ -1,0 +1,174 @@
+-- =====================================================
+-- COMPLETE SECURITY AUDIT - APPLIED VIA SUPABASE MCP
+-- Date: 2026-01-29
+-- Project: irhcsswgriznsroimnhf (Talka)
+-- =====================================================
+-- 
+-- This file documents all security fixes applied to the database.
+-- These migrations were applied via Supabase MCP tools.
+--
+-- CRITICAL FIX: Removed PUBLIC access policies that allowed
+-- anyone in the world to access stories via direct URL.
+--
+-- =====================================================
+
+-- =====================================================
+-- MIGRATION 1: fix_storage_security_remove_public_access
+-- Removed insecure PUBLIC policies from storage
+-- =====================================================
+-- Dropped policies:
+--   - "Storage(stories): public read" (allowed public access!)
+--   - "stories_read_all" (allowed public access!)
+--   - All duplicate/conflicting avatar policies
+--   - All duplicate/conflicting chat-files policies
+
+-- =====================================================
+-- MIGRATION 2: create_secure_storage_policies
+-- Created authenticated-only storage policies
+-- =====================================================
+
+-- AVATAR BUCKET POLICIES (bucket_id = 'avatar')
+-- - avatar_select_authenticated: All authenticated users can view
+-- - avatar_insert_own: Users upload to {user_id}/ folder only
+-- - avatar_update_own: Users update own files only
+-- - avatar_delete_own: Users delete own files only
+
+-- CHAT-FILES BUCKET POLICIES (bucket_id = 'chat-files')
+-- - chatfiles_select_participant: Only chat participants can view
+-- - chatfiles_insert_participant: Only participants can upload
+-- - chatfiles_update_owner: Only file owner can update
+-- - chatfiles_delete_owner: Only file owner can delete
+
+-- STORIES BUCKET POLICIES (bucket_id = 'stories')
+-- - stories_select_contacts: Owner sees own + users who share a chat see
+-- - stories_insert_own: Users upload to {user_id}/ folder only
+-- - stories_update_own: Users update own files only
+-- - stories_delete_own: Users delete own files only
+
+-- =====================================================
+-- MIGRATION 3: add_performance_indexes
+-- Added indexes to speed up RLS policy queries
+-- =====================================================
+-- CREATE INDEX IF NOT EXISTS idx_chat_participants_user_chat ON public.chat_participants(user_id, chat_id);
+-- CREATE INDEX IF NOT EXISTS idx_chat_participants_chat_id ON public.chat_participants(chat_id);
+-- CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON public.messages(chat_id);
+-- CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON public.messages(sender_id);
+-- CREATE INDEX IF NOT EXISTS idx_stories_user_id ON public.stories(user_id);
+-- CREATE INDEX IF NOT EXISTS idx_story_views_story_id ON public.story_views(story_id);
+-- CREATE INDEX IF NOT EXISTS idx_device_tokens_user_id ON public.device_tokens(user_id);
+
+-- =====================================================
+-- MIGRATION 4: cleanup_duplicate_story_table_policies
+-- Cleaned up duplicate stories TABLE policies
+-- =====================================================
+-- Dropped duplicates, created:
+-- - stories_select_policy: User sees own + stories from chat contacts
+-- - stories_insert_policy: User can only insert own
+-- - stories_update_policy: User can only update own
+-- - stories_delete_policy: User can only delete own
+
+-- =====================================================
+-- MIGRATION 5: cleanup_story_views_policies
+-- Cleaned up duplicate story_views TABLE policies
+-- =====================================================
+-- - story_views_select_policy: User sees own views + views on own stories
+-- - story_views_insert_policy: User can only insert own views
+
+-- =====================================================
+-- SECURITY SUMMARY
+-- =====================================================
+-- 
+-- STORAGE (12 policies, all authenticated-only):
+-- | Bucket      | SELECT                    | INSERT      | UPDATE   | DELETE   |
+-- |-------------|---------------------------|-------------|----------|----------|
+-- | avatar      | All authenticated users   | Own folder  | Own only | Own only |
+-- | chat-files  | Chat participants only    | Participants| Owner    | Owner    |
+-- | stories     | Owner + chat contacts     | Own folder  | Own only | Own only |
+--
+-- FILE PATH STRUCTURE REQUIRED:
+-- - avatars:    {user_id}/filename.jpg
+-- - chat-files: {chat_id}/filename.jpg
+-- - stories:    {user_id}/images/filename.jpg
+--
+-- BUCKETS MUST BE PRIVATE (public = false) for RLS to apply to downloads
+--
+-- =====================================================
+-- ADDITIONAL MIGRATIONS APPLIED (Session 2)
+-- =====================================================
+--
+-- MIGRATION 6: make_avatar_bucket_public
+-- Made avatar bucket public since avatars should be visible to all users
+-- UPDATE storage.buckets SET public = true WHERE id = 'avatar';
+--
+-- MIGRATION 7: fix_function_search_paths_v2
+-- Fixed search_path for 22 functions to prevent SQL injection attacks
+-- All functions now have: SET search_path = public
+--
+-- MIGRATION 8: fix_chats_rls_policies
+-- Fixed overly permissive chats table policies (USING true / WITH CHECK true)
+-- Now properly restricted to authenticated chat participants
+--
+-- =====================================================
+-- REMAINING DASHBOARD CONFIGURATION (Manual Steps)
+-- =====================================================
+-- 1. Auth OTP Expiry: Dashboard → Auth → Email → Set < 1 hour
+-- 2. Leaked Password Protection: Dashboard → Auth → Enable breach protection
+-- 3. Postgres Upgrade: Dashboard → Settings → Upgrade database
+--
+-- =====================================================
+-- SESSION 3 MIGRATIONS
+-- =====================================================
+--
+-- MIGRATION 9: revert_avatar_bucket_to_private
+-- Avatar bucket reverted to private - only authenticated users can access
+--
+-- MIGRATION 10: fix_performance_issues_part1
+-- - Added indexes for unindexed foreign keys
+-- - Removed duplicate indexes (stories_expires_idx, story_views_unique)
+-- - Removed unused indexes
+--
+-- MIGRATION 11: fix_performance_rls_initplan
+-- Optimized RLS policies to use (select auth.uid()) pattern for better performance
+-- - Fixed chats, messages, stories, story_views policies
+--
+-- MIGRATION 12: convert_urls_to_paths
+-- Converted full URLs to storage paths in database:
+-- - profiles.avatar_url: Full URL -> path (e.g., "user_id/avatar.jpg")
+-- - stories.media_url: Full URL -> path
+-- - messages.file_url: Full URL -> path
+--
+-- MIGRATION 13-15: Additional performance fixes
+-- - Added device_tokens index
+-- - Removed more unused indexes
+-- - Optimized chat_participants, messages, calls, active_calls policies
+--
+-- MIGRATION 16: fix_chat_participants_recursion_v2
+-- Fixed infinite recursion in chat_participants SELECT policy
+-- - Created SECURITY DEFINER function: user_is_chat_participant(chat_id, user_id)
+-- - Policy now uses function to check participation without triggering RLS recursion
+--
+-- MIGRATION 17: fix_chatfiles_storage_policies
+-- Fixed chat-files storage policies to use SECURITY DEFINER function
+-- - All chatfiles_* policies now use user_is_chat_participant() function
+--
+-- MIGRATION 18: fix_stories_storage_policy
+-- Fixed stories storage SELECT policy
+-- - Created SECURITY DEFINER function: users_share_chat(user1, user2)
+-- - stories_select_contacts policy now uses function to avoid RLS recursion
+--
+-- =====================================================
+-- FLUTTER APP CHANGES
+-- =====================================================
+-- 
+-- NEW FILES CREATED:
+-- - lib/src/storage/signed_url_helper.dart (generates signed URLs with caching)
+-- - lib/src/widgets/signed_avatar.dart (avatar widget with signed URL support)
+-- - lib/src/widgets/signed_image.dart (generic image widget for any bucket)
+--
+-- UPDATED FILES:
+-- - lib/src/auth/setup_profile_page.dart (stores path instead of URL)
+-- - lib/src/settings/edit_profile_page.dart (stores path instead of URL)
+-- - lib/src/story/story_uploader.dart (stores path instead of URL)
+-- - lib/src/story/story_service.dart (generates signed URLs on fetch)
+-- - lib/src/storage/media_uploader.dart (stores path instead of URL)
+-- - lib/src/chat/chat_list_provider.dart (returns signed URLs for avatars)

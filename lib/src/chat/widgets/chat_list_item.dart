@@ -1,15 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-// Removed unused supabase import
 import '../chat_utils.dart';
 import '../chat_list_provider.dart';
+import '../../profile/user_profile_screen.dart';
 
 class ChatListItem extends ConsumerWidget {
-  const ChatListItem({super.key, required this.item, required this.onTap});
+  const ChatListItem({
+    super.key, 
+    required this.item, 
+    required this.onTap,
+    this.onDelete,
+  });
 
   final Map<String, dynamic> item;
   final VoidCallback onTap;
+  final void Function(String chatId)? onDelete;
 
   // Removed unused helper to satisfy analyzer's unused_element warning.
 
@@ -27,138 +33,260 @@ class ChatListItem extends ConsumerWidget {
     // Removed unused lastReadAt
     final unread = (item['unread_count'] as int?) ?? 0;
 
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      leading: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          if (isGroup)
-            (() {
-              final chatAvatar = (chat['avatar_url'] as String?)?.trim();
-              final hasChatAvatar = chatAvatar != null && chatAvatar.isNotEmpty;
-              return CircleAvatar(
-                radius: 28,
-                backgroundColor: cs.primaryContainer,
-                backgroundImage: hasChatAvatar ? NetworkImage(chatAvatar) : null,
-                child: hasChatAvatar ? null : const Icon(Icons.person, size: 24),
-              );
-            })()
-          else if (chatId != null)
-            ref.watch(chatOtherUserAvatarProvider(chatId)).maybeWhen(
-              data: (url) {
-                final raw = (url ?? '').trim();
-                final hasUrl = raw.isNotEmpty;
-                return CircleAvatar(
-                  radius: 28,
+    // Get other user info for profile navigation
+    final otherUserId = chatId != null && !isGroup
+        ? ref.watch(chatOtherUserIdProvider(chatId)).value
+        : null;
+    final otherUserName = chatId != null && !isGroup
+        ? ref.watch(chatOtherUserNameProvider(chatId)).value
+        : null;
+    final otherUserAvatar = chatId != null && !isGroup
+        ? ref.watch(chatOtherUserAvatarProvider(chatId)).value
+        : null;
+
+    final avatarWidget = isGroup
+        ? (chatId != null
+            ? ref.watch(chatGroupAvatarProvider(chatId)).maybeWhen(
+                data: (url) {
+                  final raw = (url ?? '').trim();
+                  final isValidUrl = raw.isNotEmpty;
+                  return CircleAvatar(
+                    radius: 26,
+                    backgroundColor: cs.primaryContainer,
+                    backgroundImage: isValidUrl ? NetworkImage(raw) : null,
+                    child: isValidUrl ? null : const Icon(Icons.group, size: 22),
+                  );
+                },
+                orElse: () => CircleAvatar(
+                  radius: 26,
                   backgroundColor: cs.primaryContainer,
-                  backgroundImage: hasUrl ? NetworkImage(raw) : null,
-                  child: hasUrl ? null : const Icon(Icons.person, size: 24),
-                );
-              },
-              orElse: () => CircleAvatar(
-                radius: 28,
+                  child: const Icon(Icons.group, size: 22),
+                ),
+              )
+            : CircleAvatar(
+                radius: 26,
                 backgroundColor: cs.primaryContainer,
-                child: const Icon(Icons.person, size: 24),
-              ),
-            )
-          else
-            CircleAvatar(
-              radius: 28,
-              backgroundColor: cs.primaryContainer,
-              child: const Icon(Icons.person, size: 24),
-            ),
-          // Online status indicator removed - only show in conversation page
-        ],
-      ),
-      title: isGroup || (chatName != null && chatName.isNotEmpty)
-          ? Text(
-              titleCase(chatName ?? 'Conversation'),
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                fontFamily: 'Roboto',
-                height: 1.1,
-              ),
-            )
-          : (chatId == null
-              ? Text(
-                  'Conversation',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    fontFamily: 'Roboto',
-                    height: 1.1,
+                child: const Icon(Icons.group, size: 22),
+              ))
+        : (chatId != null
+            ? ref.watch(chatOtherUserAvatarProvider(chatId)).maybeWhen(
+                data: (url) {
+                  final raw = (url ?? '').trim();
+                  // Provider returns signed URL, just check if non-empty
+                  final isValidUrl = raw.isNotEmpty;
+                  return CircleAvatar(
+                    radius: 26,
+                    backgroundColor: cs.primaryContainer,
+                    backgroundImage: isValidUrl ? NetworkImage(raw) : null,
+                    child: isValidUrl ? null : const Icon(Icons.person, size: 22),
+                  );
+                },
+                orElse: () => CircleAvatar(
+                  radius: 26,
+                  backgroundColor: cs.primaryContainer,
+                  child: const Icon(Icons.person, size: 22),
+                ),
+              )
+            : CircleAvatar(
+                radius: 26,
+                backgroundColor: cs.primaryContainer,
+                child: const Icon(Icons.person, size: 22),
+              ));
+
+    // Wrap avatar with GestureDetector for profile navigation (DMs only)
+    final avatar = !isGroup && otherUserId != null
+        ? GestureDetector(
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => UserProfileScreen(
+                    userId: otherUserId,
+                    initialName: otherUserName,
+                    initialAvatar: otherUserAvatar,
                   ),
-                )
-              : ref.watch(chatOtherUserNameProvider(chatId)).maybeWhen(
-                  data: (raw) {
-                    final name = titleCase((raw ?? '').trim());
-                    return Text(
-                      name.isNotEmpty ? name : 'Conversation',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        fontFamily: 'Roboto',
-                        height: 1.1,
-                      ),
-                    );
-                  },
-                  orElse: () => const Text(
-                    'Conversation',
-                    style: TextStyle(
-                      fontSize: 16,
+                ),
+              );
+            },
+            child: avatarWidget,
+          )
+        : avatarWidget;
+
+    final titleWidget = isGroup || (chatName != null && chatName.isNotEmpty)
+        ? Text(
+            titleCase(chatName ?? 'Conversation'),
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  height: 1.15,
+                ),
+          )
+        : (chatId == null
+            ? Text(
+                'Conversation',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w700,
-                      fontFamily: 'Roboto',
-                      height: 1.1,
+                      height: 1.15,
                     ),
+              )
+            : ref.watch(chatOtherUserNameProvider(chatId)).maybeWhen(
+                data: (raw) {
+                  final name = titleCase((raw ?? '').trim());
+                  return Text(
+                    name.isNotEmpty ? name : 'Conversation',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          height: 1.15,
+                        ),
+                  );
+                },
+                orElse: () => Text(
+                  'Conversation',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        height: 1.15,
+                      ),
+                ),
+              ));
+
+    final subtitle = (item['last_message_content'] as String?) ?? '';
+    final borderColor = cs.outline.withValues(alpha: 0.08);
+    final tileColor = cs.surfaceContainerHighest.withValues(alpha: 0.3);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+      child: Material(
+        color: tileColor,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(color: borderColor),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          onLongPress: chatId != null ? () => _showOptions(context, chatId) : null,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                avatar,
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      titleWidget,
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: cs.onSurface.withValues(alpha: 0.7),
+                            ),
+                      ),
+                    ],
                   ),
-                )),
-      subtitle: Padding(
-        padding: const EdgeInsets.only(top: 4.0),
-        child: Text(
-          (item['last_message_content'] as String?) ?? '',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(context)
-              .textTheme
-              .bodySmall
-              ?.copyWith(
-                color: cs.onSurface.withValues(alpha: 0.75),
-                fontFamily: 'Roboto',
-              ),
+                ),
+                const SizedBox(width: 10),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      timeLabel,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                    const SizedBox(height: 8),
+                    if (unread > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: cs.primary,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '$unread',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 11,
+                          ),
+                        ),
+                      )
+                    else
+                      const SizedBox(height: 16),
+                  ],
+                ),
+              ],
+            ),
+          ),
         ),
       ),
-      trailing: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            timeLabel,
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(
-                    color: cs.onSurface.withValues(alpha: 0.65),
-                    fontWeight: FontWeight.w500,
-                    fontFamily: 'Roboto'),
+    );
+  }
+  
+  void _showOptions(BuildContext context, String chatId) {
+    final cs = Theme.of(context).colorScheme;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: cs.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: cs.onSurface.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              ListTile(
+                leading: Icon(Icons.delete_outline_rounded, color: Colors.red.shade400),
+                title: Text('Delete Conversation', style: TextStyle(color: Colors.red.shade400)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _confirmDelete(context, chatId);
+                },
+              ),
+            ],
           ),
-          const SizedBox(height: 6),
-          if (unread > 0)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                  color: cs.primary, borderRadius: BorderRadius.circular(14)),
-              child: Text('$unread',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                      fontFamily: 'Roboto')),
-            ),
-          // Removed extra FutureBuilder for unread calculation; rely on unread_count
+        ),
+      ),
+    );
+  }
+  
+  void _confirmDelete(BuildContext context, String chatId) {
+    final cs = Theme.of(context).colorScheme;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: cs.surface,
+        title: const Text('Delete Conversation'),
+        content: const Text('Are you sure you want to delete this conversation? This will remove all messages.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              onDelete?.call(chatId);
+            },
+            child: Text('Delete', style: TextStyle(color: Colors.red.shade400)),
+          ),
         ],
       ),
-      onTap: onTap,
     );
   }
 }

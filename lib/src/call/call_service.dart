@@ -894,19 +894,19 @@ class CallController extends ChangeNotifier {
         case 'incoming_call':
           // Handle incoming call from FCM - set up call state
           if (action.callId != null && _status == CallStatus.idle) {
-            await _handleIncomingCallFromPush(action.callId!);
+            await handleIncomingCallFromPush(action.callId!);
           }
           break;
         case 'answer':
           // If we don't have a call yet, try to set it up first
           if (_currentCall == null && action.callId != null) {
-            await _handleIncomingCallFromPush(action.callId!);
+            await handleIncomingCallFromPush(action.callId!);
           }
           await acceptCall();
           break;
         case 'decline':
           if (_currentCall == null && action.callId != null) {
-            await _handleIncomingCallFromPush(action.callId!);
+            await handleIncomingCallFromPush(action.callId!);
           }
           await declineCall();
           break;
@@ -935,7 +935,11 @@ class CallController extends ChangeNotifier {
           }
           break;
         case 'open':
-          // User tapped notification to open call screen - handled by CallManager
+          // User tapped notification to open call screen - load call state
+          if (action.callId != null && _status == CallStatus.idle) {
+            debugPrint('CallController: Loading call for open action: ${action.callId}');
+            await handleIncomingCallFromPush(action.callId!);
+          }
           break;
       }
     });
@@ -946,7 +950,7 @@ class CallController extends ChangeNotifier {
 
   /// Handle incoming call triggered by push notification
   /// This fetches call details from database and sets up the call state
-  Future<void> _handleIncomingCallFromPush(String callId) async {
+  Future<void> handleIncomingCallFromPush(String callId) async {
     if (_status != CallStatus.idle) {
       debugPrint('CallController: Cannot handle incoming call - already busy');
       return;
@@ -984,18 +988,33 @@ class CallController extends ChangeNotifier {
     if (pending != null) {
       debugPrint('CallController: Pending startup action: ${pending.action}, callId: ${pending.callId}');
       
-      // First, set up the incoming call state if we have a callId
+      final action = pending.action.toLowerCase();
+      
+      // Only load call for actions that require it
       if (pending.callId != null && _status == CallStatus.idle) {
-        await _handleIncomingCallFromPush(pending.callId!);
+        switch (action) {
+          case 'open':
+          case 'incoming_call':
+          case 'answer':
+          case 'decline':
+            debugPrint('CallController: Loading call ${pending.callId} for action: $action');
+            await handleIncomingCallFromPush(pending.callId!);
+            break;
+          case 'remote_end':
+          case 'timeout':
+            debugPrint('CallController: Ignoring pending action $action - call already ended');
+            return; // Don't process actions for ended calls
+          default:
+            break;
+        }
       }
       
-      // Emit the action to the notification stream so CallManager can show the call screen
-      // This handles the 'open' action which should show the call screen
+      // Emit the action to the notification stream
       CallNotifications.emitAction(pending);
       
       // Handle specific actions after a short delay to ensure UI is ready
       Future.delayed(const Duration(milliseconds: 500), () {
-        switch (pending.action.toLowerCase()) {
+        switch (action) {
           case 'answer':
             acceptCall();
             break;
@@ -1005,7 +1024,6 @@ class CallController extends ChangeNotifier {
           case 'hangup':
             endCall();
             break;
-          // 'open' action is handled by CallManager via the emitted action
         }
       });
     }
@@ -1049,6 +1067,9 @@ class CallController extends ChangeNotifier {
       await CallNotifications.endCallNotification(_currentCall!.id);
     }
     await CallNotifications.stopForegroundService();
+    
+    // Close CallActivity (for Android)
+    await CallNotifications.closeCallActivity();
 
     // Reset state
     _pendingIceCandidates.clear();

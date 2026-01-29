@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../providers.dart';
+import '../storage/signed_url_helper.dart';
 import 'conversation_page.dart';
 
 class SearchUserScreen extends ConsumerStatefulWidget {
@@ -48,8 +49,19 @@ class _SearchUserScreenState extends ConsumerState<SearchUserScreen> {
           .neq('id', currentUserId ?? '')
           .limit(20);
 
+      // Sign avatar URLs
+      final users = List<Map<String, dynamic>>.from(results as List);
+      for (int i = 0; i < users.length; i++) {
+        final user = Map<String, dynamic>.from(users[i]);
+        final avatarUrl = user['avatar_url'] as String?;
+        if (avatarUrl != null && avatarUrl.isNotEmpty) {
+          user['avatar_url'] = await SignedUrlHelper.getAvatarUrl(client, avatarUrl);
+        }
+        users[i] = user;
+      }
+      
       setState(() {
-        _searchResults = List<Map<String, dynamic>>.from(results as List);
+        _searchResults = users;
         _isLoading = false;
       });
     } catch (e) {

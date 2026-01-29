@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../providers.dart';
 import '../storage/media_uploader.dart';
+import '../storage/signed_url_helper.dart';
 import 'widgets/chat_app_bar.dart';
 import 'widgets/message_list.dart';
 import 'widgets/message_input.dart';
@@ -28,6 +29,68 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
   final FocusNode _inputFocus = FocusNode();
   List<Map<String, dynamic>> _messages = [];
   bool _initialLoaded = false;
+  
+  // Reply state
+  Map<String, dynamic>? _replyingTo;
+  
+  void _setReplyingTo(Map<String, dynamic>? message) {
+    setState(() => _replyingTo = message);
+    if (message != null) {
+      _inputFocus.requestFocus();
+    }
+  }
+  
+  void _cancelReply() {
+    setState(() => _replyingTo = null);
+  }
+
+  Future<void> _upsertMessage(Map<String, dynamic> message) async {
+    if (!mounted) return;
+    
+    // Sign file_url if present
+    var msg = Map<String, dynamic>.from(message);
+    final fileUrl = msg['file_url'] as String?;
+    if (fileUrl != null && fileUrl.isNotEmpty && !fileUrl.startsWith('http')) {
+      final client = ref.read(supabaseProvider);
+      msg['file_url'] = await SignedUrlHelper.getChatFileUrl(client, fileUrl);
+    }
+    
+    if (!mounted) return;
+    setState(() {
+      final id = msg['id']?.toString();
+      if (id == null || id.isEmpty) {
+        _messages.add(msg);
+        return;
+      }
+      final index = _messages.indexWhere((m) => m['id']?.toString() == id);
+      if (index == -1) {
+        _messages.add(msg);
+      } else {
+        _messages[index] = {..._messages[index], ...msg};
+      }
+    });
+  }
+  
+  Future<void> _deleteMessage(String messageId) async {
+    try {
+      final client = ref.read(supabaseProvider);
+      // Soft delete - set is_deleted to true
+      await client.from('messages').update({
+        'is_deleted': true,
+      }).eq('id', messageId);
+      
+      // Remove from local state immediately
+      setState(() {
+        _messages.removeWhere((m) => m['id'] == messageId);
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete message: $e')),
+        );
+      }
+    }
+  }
 
   // 2025 trending colors palette
 
@@ -68,7 +131,7 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
             // Fetch latest inserted row and animate into list
             final Map<String, dynamic> row = payload.newRecord;
             if (row['is_deleted'] != true) {
-              setState(() => _messages.add(row));
+              await _upsertMessage(row);
               // Always pin to bottom when a new message arrives
               WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
               // Mark incoming messages as read immediately since user is viewing
@@ -95,8 +158,10 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
                   _messages.removeAt(index);
                 } else {
                   // Update existing message (including read_at updates)
-                  _messages[index] = updatedRow;
+                  _messages[index] = {..._messages[index], ...updatedRow};
                 }
+              } else if (updatedRow['is_deleted'] != true) {
+                _messages.add(updatedRow);
               }
             });
           },
@@ -214,10 +279,10 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
         'sender_name': senderName,
         'avatar_url': avatarUrl,
         'message': {
-          'message_type': messageType,
+          'messageType': messageType,
           'content': text,
-          'sender_id': senderId,
-          'file_url': fileUrl,
+          'senderId': senderId,
+          'fileUrl': fileUrl,
         },
       });
     } catch (e) {
@@ -229,19 +294,28 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
   Future<void> _send() async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
+    // Capture reply info before clearing
+    final replyToId = _replyingTo?['id'];
     // Clear input immediately for responsive UX
     _controller.clear();
+    _cancelReply();
     _scrollToBottom();
     
     final client = ref.read(supabaseProvider);
-    await client.from('messages').insert({
+    final inserted = await client.from('messages').insert({
       'chat_id': widget.conversationId,
       'content': text,
       'sender_id': client.auth.currentUser?.id,
       'message_type': 'text',
       'is_edited': false,
       'is_deleted': false,
-    });
+      if (replyToId != null) 'reply_to_id': replyToId,
+    }).select().maybeSingle();
+    if (!mounted) return;
+    if (inserted != null) {
+      _upsertMessage(Map<String, dynamic>.from(inserted));
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    }
     // Fire and forget notification
     _notifyRecipient(messageType: 'text', text: text);
     // Beat on send
@@ -252,7 +326,7 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
 
   Future<void> _attachAndSend() async {
     try {
-      final url = await MediaUploader.pickAndUpload(ref);
+      final url = await MediaUploader.showPickerAndUpload(context, ref, chatId: widget.conversationId!);
       if (url == null || url.isEmpty) return;
       final client = ref.read(supabaseProvider);
       final text = _controller.text.trim();
@@ -260,17 +334,29 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
       _controller.clear();
       _scrollToBottom();
       
-      await client.from('messages').insert({
+      final replyToId = _replyingTo?['id'];
+      _cancelReply();
+      final inserted = await client.from('messages').insert({
         'chat_id': widget.conversationId,
         'content': text.isNotEmpty ? text : null,
         'file_url': url,
         'sender_id': client.auth.currentUser?.id,
-        'message_type': 'media',
+        'message_type': 'image',
         'is_edited': false,
         'is_deleted': false,
-      });
+        if (replyToId != null) 'reply_to_id': replyToId,
+      }).select().maybeSingle();
+      if (!mounted) return;
+      if (inserted != null) {
+        _upsertMessage(Map<String, dynamic>.from(inserted));
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+      }
       // Fire and forget notification
-      _notifyRecipient(messageType: 'media', text: text.isNotEmpty ? text : null, fileUrl: url);
+      _notifyRecipient(
+        messageType: 'image',
+        text: text.isNotEmpty ? text : null,
+        fileUrl: url,
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -339,8 +425,11 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
 
       final fullName = otherUser?['full_name'] as String?;
       final username = otherUser?['username'] as String?;
-      final avatarUrl = otherUser?['avatar_url'] as String?;
-      if (avatarUrl != null) avatar = avatarUrl;
+      final avatarPath = otherUser?['avatar_url'] as String?;
+      // Sign the avatar URL if it's a storage path
+      if (avatarPath != null && avatarPath.isNotEmpty) {
+        avatar = await SignedUrlHelper.getAvatarUrl(client, avatarPath);
+      }
       if (fullName != null && fullName.trim().isNotEmpty) {
         name = fullName.trim();
       } else if (username != null && username.trim().isNotEmpty) {
@@ -349,6 +438,30 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
       // Removed last_seen computation; presence will provide live activity state.
     } catch (_) {}
     return {'name': name, 'avatar': avatar};
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchMessagesWithSignedUrls() async {
+    final client = ref.read(supabaseProvider);
+    final rows = await client
+        .from('messages')
+        .select('id, content, file_url, created_at, sender_id, message_type, file_name, file_size, is_edited, reply_to_id, is_deleted, read_at, delivered_at')
+        .eq('chat_id', widget.conversationId!)
+        .eq('is_deleted', false)
+        .order('created_at', ascending: true);
+    
+    final messages = List<Map<String, dynamic>>.from(rows as List);
+    
+    // Sign file URLs for chat images
+    for (int i = 0; i < messages.length; i++) {
+      final fileUrl = messages[i]['file_url'] as String?;
+      if (fileUrl != null && fileUrl.isNotEmpty) {
+        final msg = Map<String, dynamic>.from(messages[i]);
+        msg['file_url'] = await SignedUrlHelper.getChatFileUrl(client, fileUrl);
+        messages[i] = msg;
+      }
+    }
+    
+    return messages;
   }
 
   @override
@@ -387,12 +500,7 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
             children: [
               Expanded(
                 child: FutureBuilder<List<Map<String, dynamic>>>(
-                  future: client
-                      .from('messages')
-                      .select('id, content, file_url, created_at, sender_id, message_type, file_name, file_size, is_edited, reply_to_id, is_deleted, read_at')
-                      .eq('chat_id', widget.conversationId!)
-                      .eq('is_deleted', false)
-                      .order('created_at', ascending: true),
+                  future: _fetchMessagesWithSignedUrls(),
                   builder: (context, snapshot) {
                     if (snapshot.hasError) {
                       return Center(
@@ -416,6 +524,8 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
                       messages: _messages,
                       scrollController: _scrollController,
                       client: client,
+                      onReply: _setReplyingTo,
+                      onDelete: _deleteMessage,
                     );
                   },
                 ),
@@ -425,6 +535,8 @@ class _ConversationPageState extends ConsumerState<ConversationPage> {
                 focusNode: _inputFocus,
                 onSend: _send,
                 onAttach: _attachAndSend,
+                replyingTo: _replyingTo,
+                onCancelReply: _cancelReply,
                 onChanged: (_) {
                   // Keep recent messages visible while typing
                   WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom(animated: false));

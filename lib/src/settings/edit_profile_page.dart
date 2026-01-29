@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:io';
 import '../providers.dart';
+import '../storage/signed_url_helper.dart';
 
 class EditProfilePage extends ConsumerStatefulWidget {
   const EditProfilePage({super.key});
@@ -52,12 +53,18 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
           .maybeSingle();
 
       if (row != null && mounted) {
+        // Sign avatar URL
+        String? signedAvatarUrl = row['avatar_url'] as String?;
+        if (signedAvatarUrl != null && signedAvatarUrl.isNotEmpty) {
+          signedAvatarUrl = await SignedUrlHelper.getAvatarUrl(client, signedAvatarUrl);
+        }
+        
         setState(() {
           _nameController.text = (row['full_name'] as String?) ?? '';
           _usernameController.text = (row['username'] as String?) ?? '';
           _originalUsername = (row['username'] as String?) ?? '';
           _bioController.text = (row['bio'] as String?) ?? '';
-          _currentAvatarUrl = row['avatar_url'] as String?;
+          _currentAvatarUrl = signedAvatarUrl;
           _isInitialized = true;
         });
       }
@@ -123,13 +130,10 @@ class _EditProfilePageState extends ConsumerState<EditProfilePage> {
       
       debugPrint('Upload result: $uploadResult');
       
-      final publicUrl = client.storage
-          .from('avatar')
-          .getPublicUrl(fileName);
+      // Store only the path, not full URL (signed URLs generated on display)
+      debugPrint('Stored path: $fileName');
       
-      debugPrint('Public URL: $publicUrl');
-      
-      return '$publicUrl?t=${DateTime.now().millisecondsSinceEpoch}';
+      return fileName;
     } catch (e) {
       debugPrint('Error uploading avatar: $e');
       if (mounted) {

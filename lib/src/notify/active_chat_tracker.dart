@@ -64,8 +64,10 @@ class ActiveChatTracker {
     }
     
     // Fall back to SharedPreferences check
+    // IMPORTANT: Reload from disk to get latest value (crucial for background isolate)
     try {
       final prefs = await SharedPreferences.getInstance();
+      await prefs.reload(); // Force reload from disk
       final storedChatId = prefs.getString(_prefKey);
       final storedTime = prefs.getInt('${_prefKey}_time');
       

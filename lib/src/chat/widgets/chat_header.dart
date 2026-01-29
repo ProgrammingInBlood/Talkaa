@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers.dart';
+import '../../storage/signed_url_helper.dart';
 import '../chat_utils.dart';
+import '../search_user_screen.dart';
 import 'package:talka_flutter/src/story/story_uploader.dart';
 import 'package:talka_flutter/src/story/story_service.dart';
 import 'package:dotted_border/dotted_border.dart';
 import 'package:talka_flutter/src/story/story_providers.dart';
 import 'package:talka_flutter/src/story/story_viewer_screen.dart';
-import 'package:talka_flutter/src/profile/user_profile_provider.dart';
 
 class ChatHeader extends ConsumerWidget {
   const ChatHeader({super.key, required this.items});
@@ -22,7 +23,7 @@ class ChatHeader extends ConsumerWidget {
 
     return SliverAppBar(
       pinned: true,
-      expandedHeight: 188,
+      expandedHeight: 168,
       backgroundColor: cs.primary,
       foregroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
@@ -44,57 +45,61 @@ class ChatHeader extends ConsumerWidget {
             child: SafeArea(
               bottom: false,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-
-
-                    Builder(builder: (context) {
-                      final nameAsync = ref.watch(currentUserDisplayNameProvider);
-                      return nameAsync.when(
-                        data: (raw) {
-                          final firstName = raw.split(RegExp(r"\s+")).first;
-                          final capFirst = titleCase(firstName);
-                          return Text(
-                            'Hello $capFirst',
-                            style: const TextStyle(
-                              fontSize: 26,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                              height: 1.0,
-                              fontFamily: 'Roboto',
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.18),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.chat_bubble_rounded,
+                            size: 18,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        const Text(
+                          'Talka',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                            letterSpacing: 0.2,
+                            fontFamily: 'Roboto',
+                          ),
+                        ),
+                        const Spacer(),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const SearchUserScreen(),
+                              ),
+                            );
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.18),
+                              borderRadius: BorderRadius.circular(16),
                             ),
-                          );
-                        },
-                        loading: () => const Text(
-                          'Hello',
-                          style: TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                            height: 1.0,
-                            fontFamily: 'Roboto',
+                            child: const Icon(
+                              Icons.add_rounded,
+                              size: 20,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
-                        error: (_, __) => const Text(
-                          'Hello',
-                          style: TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                            height: 1.0,
-                            fontFamily: 'Roboto',
-                          ),
-                        ),
-                      );
-                    }),
-                    const SizedBox(height: 2),
-                    const Text(
-                      'Welcome back',
-                      style: TextStyle(color: Colors.white70, fontFamily: 'Roboto', height: 1.0),
+                      ],
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 12),
                     SizedBox(
                       height: 92,
                       child: Row(
@@ -107,20 +112,27 @@ class ChatHeader extends ConsumerWidget {
                                 .maybeSingle(),
                             builder: (context, snap) {
                               final p = snap.data ?? const {};
-                              final avatarUrl = p['avatar_url'] as String?;
-                              Widget avatar;
-                              if (avatarUrl != null && avatarUrl.isNotEmpty) {
-                                avatar = CircleAvatar(
-                                  radius: 30,
-                                  backgroundImage: NetworkImage(avatarUrl),
-                                );
-                              } else {
-                                avatar = CircleAvatar(
-                                  radius: 30,
-                                  backgroundColor: cs.primaryContainer,
-                                  child: const Icon(Icons.person, color: Colors.white),
-                                );
-                              }
+                              final avatarPath = p['avatar_url'] as String?;
+                              // Use FutureBuilder to get signed URL for own avatar
+                              return FutureBuilder<String>(
+                                future: avatarPath != null && avatarPath.isNotEmpty
+                                    ? SignedUrlHelper.getAvatarUrl(client, avatarPath)
+                                    : Future.value(''),
+                                builder: (context, avatarSnap) {
+                                  final avatarUrl = avatarSnap.data ?? '';
+                                  Widget avatar;
+                                  if (avatarUrl.isNotEmpty) {
+                                    avatar = CircleAvatar(
+                                      radius: 30,
+                                      backgroundImage: NetworkImage(avatarUrl),
+                                    );
+                                  } else {
+                                    avatar = CircleAvatar(
+                                      radius: 30,
+                                      backgroundColor: cs.primaryContainer,
+                                      child: const Icon(Icons.person, color: Colors.white),
+                                    );
+                                  }
                               return GestureDetector(
                                 onTap: () async {
                                   final svc = ref.read(StoryService.storyServiceProvider);
@@ -300,6 +312,8 @@ class ChatHeader extends ConsumerWidget {
                                   ],
                                 ),
                               );
+                                },
+                              );
                             },
                           ),
                           const SizedBox(width: 14),
@@ -318,12 +332,26 @@ class ChatHeader extends ConsumerWidget {
                                         if (others.isEmpty) {
                                           return const SizedBox.shrink();
                                         }
+                                        // Group stories by user_id to show one avatar per user
+                                        final Map<String, List<Map<String, dynamic>>> groupedByUser = {};
+                                        for (final s in others) {
+                                          final uid = s['user_id']?.toString() ?? '';
+                                          groupedByUser.putIfAbsent(uid, () => []).add(s);
+                                        }
+                                        final userIds = groupedByUser.keys.toList();
+                                        
                                         return Row(
                                           children: [
-                                            for (int i = 0; i < others.length; i++)
+                                            for (int i = 0; i < userIds.length; i++)
                                               Builder(builder: (context) {
-                                                final s = others[i];
-                                                final hasViewed = (s['hasViewed'] == true);
+                                                final uid = userIds[i];
+                                                final userStories = groupedByUser[uid]!;
+                                                final s = userStories.first; // Use first story for user info
+                                                // Check if ALL stories from this user have been viewed
+                                                final hasViewedAll = userStories.every((story) => story['hasViewed'] == true);
+                                                final userProfile = s['user'] as Map<String, dynamic>? ?? const {};
+                                                final avatarUrl = (userProfile['avatar_url'] ?? '') as String;
+                                                
                                                 return Padding(
                                                   padding: const EdgeInsets.symmetric(horizontal: 7.0),
                                                   child: Column(
@@ -334,7 +362,7 @@ class ChatHeader extends ConsumerWidget {
                                                         children: [
                                                           Container(
                                                             padding: const EdgeInsets.all(3),
-                                                            decoration: hasViewed
+                                                            decoration: hasViewedAll
                                                                 ? const BoxDecoration(
                                                                     shape: BoxShape.circle,
                                                                     border: Border.fromBorderSide(BorderSide(color: Colors.white30, width: 2)),
@@ -355,8 +383,8 @@ class ChatHeader extends ConsumerWidget {
                                                                     PageRouteBuilder(
                                                                       opaque: false,
                                                                       pageBuilder: (_, __, ___) => StoryViewerScreen(
-                                                                        stories: others,
-                                                                        initialIndex: i,
+                                                                        stories: userStories,
+                                                                        initialIndex: 0,
                                                                         isOwnStory: false,
                                                                       ),
                                                                       transitionsBuilder: (_, animation, __, child) {
@@ -369,18 +397,45 @@ class ChatHeader extends ConsumerWidget {
                                                                 child: CircleAvatar(
                                                                   radius: 30,
                                                                   backgroundColor: cs.primaryContainer,
-                                                                  backgroundImage: NetworkImage((s['media_url'] ?? '') as String),
+                                                                  backgroundImage: avatarUrl.isNotEmpty 
+                                                                      ? NetworkImage(avatarUrl)
+                                                                      : null,
+                                                                  child: avatarUrl.isEmpty 
+                                                                      ? const Icon(Icons.person, color: Colors.white)
+                                                                      : null,
                                                                 ),
                                                               ),
                                                             ),
                                                           ),
+                                                          // Story count badge if multiple stories
+                                                          if (userStories.length > 1)
+                                                            Positioned(
+                                                              right: 0,
+                                                              bottom: 0,
+                                                              child: Container(
+                                                                padding: const EdgeInsets.all(4),
+                                                                decoration: BoxDecoration(
+                                                                  color: cs.primary,
+                                                                  shape: BoxShape.circle,
+                                                                  border: Border.all(color: Colors.white, width: 1.5),
+                                                                ),
+                                                                child: Text(
+                                                                  '${userStories.length}',
+                                                                  style: const TextStyle(
+                                                                    color: Colors.white,
+                                                                    fontSize: 10,
+                                                                    fontWeight: FontWeight.bold,
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            ),
                                                         ],
                                                       ),
                                                       const SizedBox(height: 3),
                                                       SizedBox(
                                                         width: 64,
                                                         child: Text(
-                                                          titleCase(((s['user'] ?? const {})['full_name'] ?? (s['user'] ?? const {})['username'] ?? 'Story') as String),
+                                                          titleCase((userProfile['full_name'] ?? userProfile['username'] ?? 'Story') as String),
                                                           maxLines: 1,
                                                           overflow: TextOverflow.ellipsis,
                                                           textAlign: TextAlign.center,

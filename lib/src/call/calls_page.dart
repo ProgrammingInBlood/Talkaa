@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
 import '../providers.dart';
+import '../storage/signed_url_helper.dart';
 import 'call_service.dart';
 import 'call_manager.dart';
 import 'model/call_state.dart';
@@ -46,8 +47,34 @@ class _CallsPageState extends ConsumerState<CallsPage> {
           .order('started_at', ascending: false)
           .limit(50);
 
+      // Sign avatar URLs for caller and callee
+      final calls = List<Map<String, dynamic>>.from(response);
+      for (int i = 0; i < calls.length; i++) {
+        final call = Map<String, dynamic>.from(calls[i]);
+        
+        if (call['caller'] != null) {
+          final caller = Map<String, dynamic>.from(call['caller'] as Map);
+          final callerAvatar = caller['avatar_url'] as String?;
+          if (callerAvatar != null && callerAvatar.isNotEmpty) {
+            caller['avatar_url'] = await SignedUrlHelper.getAvatarUrl(client, callerAvatar);
+          }
+          call['caller'] = caller;
+        }
+        
+        if (call['callee'] != null) {
+          final callee = Map<String, dynamic>.from(call['callee'] as Map);
+          final calleeAvatar = callee['avatar_url'] as String?;
+          if (calleeAvatar != null && calleeAvatar.isNotEmpty) {
+            callee['avatar_url'] = await SignedUrlHelper.getAvatarUrl(client, calleeAvatar);
+          }
+          call['callee'] = callee;
+        }
+        
+        calls[i] = call;
+      }
+      
       setState(() {
-        _calls = List<Map<String, dynamic>>.from(response);
+        _calls = calls;
         _isLoading = false;
       });
     } catch (e) {
@@ -61,19 +88,9 @@ class _CallsPageState extends ConsumerState<CallsPage> {
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
-      backgroundColor: cs.surface,
       appBar: AppBar(
         title: const Text('Calls'),
-        backgroundColor: cs.surface,
-        surfaceTintColor: Colors.transparent,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.search),
-            onPressed: () {
-              // TODO: Implement call search
-            },
-          ),
-        ],
+        centerTitle: true,
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -99,26 +116,38 @@ class _CallsPageState extends ConsumerState<CallsPage> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.call_outlined,
-            size: 80,
-            color: cs.onSurface.withValues(alpha: 0.3),
+          Container(
+            padding: const EdgeInsets.all(32),
+            decoration: BoxDecoration(
+              color: cs.primaryContainer.withValues(alpha: 0.3),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.call_outlined,
+              size: 64,
+              color: cs.primary,
+            ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 24),
           Text(
             'No calls yet',
             style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w500,
-              color: cs.onSurface.withValues(alpha: 0.6),
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: cs.onSurface,
             ),
           ),
           const SizedBox(height: 8),
-          Text(
-            'Start a call from any chat',
-            style: TextStyle(
-              fontSize: 14,
-              color: cs.onSurface.withValues(alpha: 0.4),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 48),
+            child: Text(
+              'Start a voice or video call\nfrom any chat',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: cs.onSurface.withValues(alpha: 0.6),
+                height: 1.4,
+              ),
             ),
           ),
         ],
@@ -225,7 +254,8 @@ class _CallHistoryTile extends ConsumerWidget {
     
     final status = call['status'] as String? ?? 'ended';
     final type = call['type'] as String? ?? 'audio';
-    final startedAt = DateTime.tryParse(call['started_at'] as String? ?? '');
+    final startedAt = DateTime.tryParse(call['started_at'] as String? ?? '')
+        ?.toLocal();
     final durationSeconds = call['duration_seconds'] as int?;
 
     String durationText = '';
@@ -265,75 +295,96 @@ class _CallHistoryTile extends ConsumerWidget {
       statusText = status;
     }
 
-    return ListTile(
-      leading: CircleAvatar(
-        radius: 24,
-        backgroundColor: cs.primary.withValues(alpha: 0.1),
-        backgroundImage: avatarUrl != null && avatarUrl.isNotEmpty
-            ? CachedNetworkImageProvider(avatarUrl)
-            : null,
-        child: avatarUrl == null || avatarUrl.isEmpty
-            ? Text(
-                name.isNotEmpty ? name[0].toUpperCase() : '?',
-                style: TextStyle(
-                  color: cs.primary,
-                  fontWeight: FontWeight.w600,
-                ),
-              )
-            : null,
-      ),
-      title: Text(
-        name,
-        style: const TextStyle(fontWeight: FontWeight.w500),
-      ),
-      subtitle: Row(
-        children: [
-          Icon(statusIcon, size: 16, color: statusColor),
-          const SizedBox(width: 4),
-          Text(
-            statusText,
-            style: TextStyle(
-              color: statusColor,
-              fontSize: 13,
-            ),
-          ),
-          const SizedBox(width: 8),
-          if (startedAt != null)
-            Text(
-              _formatTime(startedAt),
-              style: TextStyle(
-                color: cs.onSurface.withValues(alpha: 0.5),
-                fontSize: 13,
-              ),
-            ),
-        ],
-      ),
-      trailing: IconButton(
-        icon: Icon(
-          type == 'video' ? Icons.videocam_rounded : Icons.call_rounded,
-          color: cs.primary,
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: cs.outlineVariant.withValues(alpha: 0.2),
+          width: 1,
         ),
-        onPressed: () {
-          final callType = type == 'video' ? CallType.video : CallType.audio;
-          _initiateCall(context, ref, otherUserId, name, avatarUrl, callType, call['chat_id'] as String?);
-        },
       ),
-      onTap: () => _showCallOptions(context, ref, otherUserId, name, avatarUrl),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: CircleAvatar(
+          radius: 26,
+          backgroundColor: cs.primary.withValues(alpha: 0.1),
+          backgroundImage: avatarUrl != null && avatarUrl.isNotEmpty
+              ? CachedNetworkImageProvider(avatarUrl)
+              : null,
+          child: avatarUrl == null || avatarUrl.isEmpty
+              ? Text(
+                  name.isNotEmpty ? name[0].toUpperCase() : '?',
+                  style: TextStyle(
+                    color: cs.primary,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 18,
+                  ),
+                )
+              : null,
+        ),
+        title: Text(
+          name,
+          style: const TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 15,
+          ),
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Row(
+            children: [
+              Icon(statusIcon, size: 16, color: statusColor),
+              const SizedBox(width: 4),
+              Text(
+                statusText,
+                style: TextStyle(
+                  color: statusColor,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (startedAt != null)
+                Text(
+                  _formatTime(startedAt),
+                  style: TextStyle(
+                    color: cs.onSurface.withValues(alpha: 0.5),
+                    fontSize: 13,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        trailing: IconButton(
+          icon: Icon(
+            type == 'video' ? Icons.videocam_rounded : Icons.call_rounded,
+            color: cs.primary,
+          ),
+          onPressed: () {
+            final callType = type == 'video' ? CallType.video : CallType.audio;
+            _initiateCall(context, ref, otherUserId, name, avatarUrl, callType, call['chat_id'] as String?);
+          },
+        ),
+        onTap: () => _showCallOptions(context, ref, otherUserId, name, avatarUrl),
+      ),
     );
   }
 
   String _formatTime(DateTime dt) {
+    final local = dt.toLocal();
     final now = DateTime.now();
-    final diff = now.difference(dt);
+    final diff = now.difference(local);
 
     if (diff.inDays == 0) {
-      return DateFormat.jm().format(dt);
+      return DateFormat.jm().format(local);
     } else if (diff.inDays == 1) {
       return 'Yesterday';
     } else if (diff.inDays < 7) {
-      return DateFormat.E().format(dt);
+      return DateFormat.E().format(local);
     } else {
-      return DateFormat.MMMd().format(dt);
+      return DateFormat.MMMd().format(local);
     }
   }
 }

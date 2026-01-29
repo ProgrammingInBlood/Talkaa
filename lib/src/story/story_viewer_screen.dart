@@ -550,20 +550,29 @@ class _StoryViewerScreenState extends ConsumerState<StoryViewerScreen>
 
   String _formatTime(String dateStr) {
     try {
-      final date = DateTime.parse(dateStr);
+      if (dateStr.isEmpty) return '';
+      // Parse the UTC timestamp and convert to local time for comparison
+      DateTime date = DateTime.parse(dateStr);
+      // If the date doesn't have timezone info, assume UTC
+      if (!dateStr.contains('Z') && !dateStr.contains('+')) {
+        date = DateTime.utc(date.year, date.month, date.day, date.hour, date.minute, date.second, date.millisecond, date.microsecond);
+      }
+      // Convert to local time for display
+      final localDate = date.toLocal();
       final now = DateTime.now();
-      final diff = now.difference(date);
+      final diff = now.difference(localDate);
 
-      if (diff.inMinutes < 1) {
+      if (diff.inSeconds < 60) {
         return 'Just now';
       } else if (diff.inMinutes < 60) {
         return '${diff.inMinutes}m ago';
       } else if (diff.inHours < 24) {
         return '${diff.inHours}h ago';
       } else {
-        return DateFormat('MMM d').format(date);
+        return DateFormat('MMM d').format(localDate);
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('_formatTime error: $e for dateStr: $dateStr');
       return '';
     }
   }

@@ -74,10 +74,7 @@
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
-            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true"
             android:excludeFromRecents="false"
             android:allowTaskReparenting="true">
             <meta-data
@@ -87,6 +84,25 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+        </activity>
+        <!-- Isolated Call Activity for incoming/outgoing/active call UI -->
+        <activity
+            android:name=".CallActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.anonymous.talka.call"
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:supportsPictureInPicture="true"
+            android:windowSoftInputMode="adjustResize"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true"
+            android:noHistory="false">
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme"/>
         </activity>
         <!-- Foreground service for VoIP calls. Declare all required types on Android 14+. -->
         <service

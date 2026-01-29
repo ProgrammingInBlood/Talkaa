@@ -7,6 +7,8 @@ class MessageInput extends StatelessWidget {
   final VoidCallback onAttach;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
+  final Map<String, dynamic>? replyingTo;
+  final VoidCallback? onCancelReply;
 
   const MessageInput({
     super.key,
@@ -16,6 +18,8 @@ class MessageInput extends StatelessWidget {
     required this.onAttach,
     this.onChanged,
     this.onSubmitted,
+    this.replyingTo,
+    this.onCancelReply,
   });
 
   @override
@@ -36,12 +40,17 @@ class MessageInput extends StatelessWidget {
         decoration: const BoxDecoration(
           color: Colors.transparent,
         ),
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Expanded(
-              child: Stack(
-                children: [
-                  Container(
+            // Reply preview
+            if (replyingTo != null) _buildReplyPreview(context, cs, isDark),
+            Row(
+              children: [
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Container(
                     decoration: BoxDecoration(
                       color: isDark ? cs.surface : Colors.white,
                       borderRadius: BorderRadius.circular(28),
@@ -129,11 +138,94 @@ class MessageInput extends StatelessWidget {
                       ),
                     ),
                   ),
-                ],
-              ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ],
         ),
+      ),
+    );
+  }
+  
+  Widget _buildReplyPreview(BuildContext context, ColorScheme cs, bool isDark) {
+    final content = (replyingTo?['content'] ?? '').toString();
+    final hasImage = ((replyingTo?['file_url'] ?? '') as String).isNotEmpty;
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: isDark ? cs.surface : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border(
+          left: BorderSide(color: cs.primary, width: 3),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isDark
+                ? Colors.black.withValues(alpha: 0.2)
+                : Colors.black.withValues(alpha: 0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Replying to',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: cs.primary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    if (hasImage) ...[
+                      Icon(
+                        Icons.image_rounded,
+                        size: 14,
+                        color: cs.onSurface.withValues(alpha: 0.6),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    Expanded(
+                      child: Text(
+                        content.isNotEmpty ? content : (hasImage ? 'Photo' : 'Message'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: cs.onSurface.withValues(alpha: 0.7),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          GestureDetector(
+            onTap: onCancelReply,
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(
+                Icons.close_rounded,
+                size: 20,
+                color: cs.onSurface.withValues(alpha: 0.5),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

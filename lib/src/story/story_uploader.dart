@@ -46,7 +46,8 @@ class StoryUploader {
       bytes,
       fileOptions: const FileOptions(upsert: true, contentType: 'image/jpeg'),
     );
-    return bucket.getPublicUrl(path);
+    // Store only the path, not full URL (signed URLs generated on display)
+    return path;
   }
 
   static String _fileName(XFile file) {

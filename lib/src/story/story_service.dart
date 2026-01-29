@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../providers.dart';
+import '../storage/signed_url_helper.dart';
 
 class StoryService {
   final SupabaseClient client;
@@ -19,7 +20,8 @@ class StoryService {
       'user_id': uid,
       'media_url': mediaUrl,
       'media_type': mediaType,
-      'created_at': DateTime.now().toIso8601String(),
+      // Use UTC time to match database timezone
+      'created_at': DateTime.now().toUtc().toIso8601String(),
       // expires_at default is set in DB (now + 24h)
     });
   }
@@ -29,9 +31,52 @@ class StoryService {
     final rows = await client
         .from('stories')
         .select('id, user_id, media_url, media_type, created_at, expires_at, user:profiles(full_name, username, avatar_url)')
-        .gt('expires_at', DateTime.now().toIso8601String())
+        .gt('expires_at', DateTime.now().toUtc().toIso8601String())
         .order('created_at', ascending: false);
-    return List<Map<String, dynamic>>.from(rows as List);
+    
+    // Refresh signed URLs for each story (handles old public URLs and expired signed URLs)
+    final stories = List<Map<String, dynamic>>.from(rows as List);
+    for (int i = 0; i < stories.length; i++) {
+      final story = Map<String, dynamic>.from(stories[i]);
+      final mediaUrl = story['media_url'] as String?;
+      if (mediaUrl != null) {
+        story['media_url'] = await _getSignedUrl(mediaUrl);
+      }
+      // Also sign the user's avatar_url
+      final user = story['user'] as Map<String, dynamic>?;
+      if (user != null) {
+        final userCopy = Map<String, dynamic>.from(user);
+        final avatarPath = userCopy['avatar_url'] as String?;
+        if (avatarPath != null && avatarPath.isNotEmpty) {
+          userCopy['avatar_url'] = await SignedUrlHelper.getAvatarUrl(client, avatarPath);
+        }
+        story['user'] = userCopy;
+      }
+      stories[i] = story;
+    }
+    return stories;
+  }
+
+  /// Generate fresh signed URL for story media
+  Future<String> _getSignedUrl(String pathOrUrl) async {
+    // Import the helper inline to avoid circular dependencies
+    try {
+      String path = pathOrUrl;
+      // Extract path from full URL if needed
+      if (pathOrUrl.contains('supabase.co/storage')) {
+        final cleanUrl = pathOrUrl.split('?').first;
+        final bucketPattern = '/stories/';
+        final bucketIndex = cleanUrl.indexOf(bucketPattern);
+        if (bucketIndex != -1) {
+          path = cleanUrl.substring(bucketIndex + bucketPattern.length);
+        }
+      }
+      // Generate fresh signed URL valid for 1 hour
+      return await client.storage.from('stories').createSignedUrl(path, 3600);
+    } catch (e) {
+      debugPrint('Error generating signed URL: $e');
+      return pathOrUrl;
+    }
   }
 
   Future<bool> hasActiveStoryForSelf() async {
@@ -42,7 +87,7 @@ class StoryService {
           .from('stories')
           .select('id')
           .eq('user_id', uid)
-          .gt('expires_at', DateTime.now().toIso8601String())
+          .gt('expires_at', DateTime.now().toUtc().toIso8601String())
           .limit(1);
       final list = (res as List);
       return list.isNotEmpty;
@@ -58,7 +103,7 @@ class StoryService {
       await client.from('story_views').insert({
         'story_id': storyId,
         'viewer_id': uid,
-        'viewed_at': DateTime.now().toIso8601String(),
+        'viewed_at': DateTime.now().toUtc().toIso8601String(),
       });
     } catch (e) {
       // ignore duplicate view errors or RLS rejections
@@ -127,7 +172,22 @@ class StoryService {
           .eq('story_id', storyId)
           .order('viewed_at', ascending: false);
 
-      return List<Map<String, dynamic>>.from(response as List);
+      // Sign avatar URLs for viewers
+      final viewers = List<Map<String, dynamic>>.from(response as List);
+      for (int i = 0; i < viewers.length; i++) {
+        final viewer = Map<String, dynamic>.from(viewers[i]);
+        final viewerProfile = viewer['viewer'] as Map<String, dynamic>?;
+        if (viewerProfile != null) {
+          final profileCopy = Map<String, dynamic>.from(viewerProfile);
+          final avatarPath = profileCopy['avatar_url'] as String?;
+          if (avatarPath != null && avatarPath.isNotEmpty) {
+            profileCopy['avatar_url'] = await SignedUrlHelper.getAvatarUrl(client, avatarPath);
+          }
+          viewer['viewer'] = profileCopy;
+        }
+        viewers[i] = viewer;
+      }
+      return viewers;
     } catch (e) {
       debugPrint('Error fetching story viewers: $e');
       return [];

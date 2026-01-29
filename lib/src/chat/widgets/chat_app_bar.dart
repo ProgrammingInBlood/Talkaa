@@ -154,21 +154,38 @@ class _ChatAppBarState extends ConsumerState<ChatAppBar> {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      titleCase(name),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontFamily: 'Roboto',
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15,
-                        color: Colors.white,
-                      ),
-                    ),
+                child: FutureBuilder<String?>(
+                  future: _getPeerId(ref),
+                  builder: (context, peerIdSnap) {
+                    final peerId = peerIdSnap.data;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onTap: peerId != null ? () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => UserProfileScreen(
+                                  userId: peerId,
+                                  initialName: name,
+                                  initialAvatar: avatarUrl.isNotEmpty ? avatarUrl : null,
+                                ),
+                              ),
+                            );
+                          } : null,
+                          child: Text(
+                            titleCase(name),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontFamily: 'Roboto',
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
                     // Presence-based status text: always show with "Active" or "Offline"
                     if (chatId.isNotEmpty)
                       FutureBuilder<String?>(
@@ -330,7 +347,9 @@ class _ChatAppBarState extends ConsumerState<ChatAppBar> {
                           ),
                         ],
                       ),
-                  ],
+                    ],
+                  );
+                  },
                 ),
               ),
             ],

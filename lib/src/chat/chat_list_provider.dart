@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../providers.dart';
+import '../storage/signed_url_helper.dart';
 
 final chatListProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
   final client = ref.read(supabaseProvider);
@@ -76,10 +77,49 @@ final chatOtherUserAvatarProvider = FutureProvider.family<String?, String>((ref,
     final list = rows as List;
     if (list.isNotEmpty) {
       final userMap = list.first['user'] as Map<String, dynamic>?;
-      final avatarUrl = userMap?['avatar_url'] as String?;
-      if (avatarUrl != null && avatarUrl.trim().isNotEmpty) {
-        return avatarUrl.trim();
+      final avatarPath = userMap?['avatar_url'] as String?;
+      if (avatarPath != null && avatarPath.trim().isNotEmpty) {
+        // Generate signed URL for private avatar bucket
+        return await SignedUrlHelper.getAvatarUrl(client, avatarPath.trim());
       }
+    }
+  } catch (_) {}
+  return null;
+});
+
+// Cached provider for other user's ID (DMs)
+final chatOtherUserIdProvider = FutureProvider.family<String?, String>((ref, chatId) async {
+  final client = ref.read(supabaseProvider);
+  final myId = client.auth.currentUser?.id;
+  if (myId == null) return null;
+  try {
+    final rows = await client
+        .from('chat_participants')
+        .select('user_id')
+        .eq('chat_id', chatId)
+        .neq('user_id', myId)
+        .limit(1);
+    final list = rows as List;
+    if (list.isNotEmpty) {
+      return list.first['user_id'] as String?;
+    }
+  } catch (_) {}
+  return null;
+});
+
+// Cached provider for group chat avatar url (signed)
+final chatGroupAvatarProvider = FutureProvider.family<String?, String>((ref, chatId) async {
+  final client = ref.read(supabaseProvider);
+  try {
+    final row = await client
+        .from('chats')
+        .select('avatar_url')
+        .eq('id', chatId)
+        .maybeSingle();
+    final avatarPath = row?['avatar_url'] as String?;
+    if (avatarPath != null && avatarPath.trim().isNotEmpty) {
+      // Generate signed URL for avatar bucket
+      return await SignedUrlHelper.getAvatarUrl(client, avatarPath.trim());
     }
   } catch (_) {}
   return null;
